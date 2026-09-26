@@ -194,6 +194,30 @@ class InstallerTests(unittest.TestCase):
         self.run_cli('--uninstall', '--only', 'opencode')
         self.assertEqual(json.loads(cfg.read_text()), {'permission': {'skill': 'ask', 'bash': 'deny'}})
 
+    def test_permission_order_effective_and_restored(self):
+        cfg = self.layout.config('opencode')
+        original = {'permission': {'skill': {'superpowers-brainstorming': 'ask', '*': 'allow'}, '*': 'allow'}}
+        put(cfg, json.dumps(original))
+        self.run_cli('--only', 'opencode')
+        data = json.loads(cfg.read_text())
+        self.assertEqual(list(data['permission'])[-1], 'skill')
+        self.assertEqual(list(data['permission']['skill'])[0], '*')
+        self.run_cli('--only', 'opencode')
+        self.assertEqual(json.loads(cfg.read_text()), data)
+        self.run_cli('--uninstall', '--only', 'opencode')
+        self.assertEqual(json.dumps(json.loads(cfg.read_text())), json.dumps(original))
+
+    def test_permission_order_only_change_and_user_addition(self):
+        cfg = self.layout.config('opencode')
+        put(cfg, '{"permission":{"skill":{"superpowers-brainstorming":"deny","*":"allow"}}}')
+        self.run_cli('--only', 'opencode', '--skills', 'brainstorming')
+        data = json.loads(cfg.read_text())
+        self.assertEqual(list(data['permission']['skill']), ['*', 'superpowers-brainstorming'])
+        data['permission']['skill']['other'] = 'ask'
+        put(cfg, json.dumps(data))
+        self.run_cli('--uninstall', '--only', 'opencode')
+        self.assertEqual(list(json.loads(cfg.read_text())['permission']['skill']), ['superpowers-brainstorming', '*', 'other'])
+
     def test_uninstall_preserves_new_user_config_fields(self):
         self.run_cli()
         cfg = self.layout.config('opencode')

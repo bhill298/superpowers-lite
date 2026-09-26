@@ -453,10 +453,33 @@ class ConfigEdit:
         elif not isinstance(value, dict):
             raise SetupError(f'{self.path}: {".".join(path)} must be a table/object or permission shorthand')
 
+    def order_last(self, path, names):
+        present, table = get_at(self.data, path)
+        if not present or not isinstance(table, dict):
+            raise SetupError(f'Cannot order non-table setting: {path}')
+        before = list(table)
+        after = [key for key in before if key not in names] + [key for key in names if key in table]
+        if before == after:
+            return
+        if tuple(path) in self.conflicts:
+            raise SetupError(f'User-modified owned setting order: {self.path}: {".".join(path)}')
+        self.ops.append({'kind': 'order', 'path': path, 'before': before, 'after': after})
+        set_at(self.data, path, True, {key: table[key] for key in after})
+
     def release(self, record):
         self.created = record.get('created', False)
         for op in reversed(record['ops']):
             present, current = get_at(self.data, op['path'])
+            if op.get('kind') == 'order':
+                known = set(op['after'])
+                if present and isinstance(current, dict) and [k for k in current if k in known] == [k for k in op['after'] if k in current]:
+                    restored = iter(k for k in op['before'] if k in current)
+                    keys = [next(restored) if k in known else k for k in current]
+                    set_at(self.data, op['path'], True, {k: current[k] for k in keys})
+                else:
+                    warn(f'Preserving user-modified setting order {self.path}: {".".join(op["path"])}')
+                    self.conflicts.add(tuple(op['path']))
+                continue
             if present and current == op['after']:
                 set_at(self.data, op['path'], op['before_exists'], op['before'])
             else:
@@ -466,7 +489,7 @@ class ConfigEdit:
     def result(self):
         if self.created and not self.data:
             return None
-        if self.data == self.initial:
+        if self.data == self.initial and (self.path.suffix == '.toml' or json_bytes(self.data) == json_bytes(self.initial)):
             return self.original
         return dump_toml(self.data) if self.path.suffix == '.toml' else json_bytes(self.data)
 
@@ -681,6 +704,15 @@ def load_manifest(layout):
             if not Path(path).is_absolute() or not isinstance(config, dict) or not isinstance(config.get('ops'), list):
                 raise SetupError('Invalid configuration ownership record')
             for op in config['ops']:
+                if isinstance(op, dict) and op.get('kind') == 'order':
+                    if (not isinstance(op.get('path'), list) or not op['path']
+                            or not all(isinstance(k, str) for k in op['path'])
+                            or any(not isinstance(op.get(k), list) or not all(isinstance(v, str) for v in op[k]) for k in ('before', 'after'))
+                            or len(set(op['before'])) != len(op['before'])
+                            or len(set(op['after'])) != len(op['after'])
+                            or set(op['before']) != set(op['after'])):
+                        raise SetupError('Invalid configuration ordering operation')
+                    continue
                 if (not isinstance(op, dict) or not isinstance(op.get('path'), list) or not op['path']
                         or not all(isinstance(k, str) for k in op['path'])
                         or not isinstance(op.get('before_exists'), bool) or 'before' not in op or 'after' not in op):
@@ -922,6 +954,8 @@ def prepare(args, layout, temp):
                 edit.table(['permission', 'skill'], shorthand=True)
                 for name in next_names:
                     edit.put(['permission', 'skill', name], 'deny')
+                edit.order_last(['permission', 'skill'], next_names)
+                edit.order_last(['permission'], ['skill'])
             elif 'permission' in edit.data:
                 warn(f'{edit.path} still contains unrelated V1 permission settings; V2 uses permissions.')
         if harness == 'codex':
