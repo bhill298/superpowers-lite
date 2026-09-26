@@ -1042,10 +1042,170 @@ def prepare(args, layout, temp):
     return plan, state, selected
 
 
+def markdown_contract(text):
+    """Extract executable examples and template substitutions, not prose."""
+    blocks, current, fence, language = [], [], None, ''
+    for line in text.splitlines():
+        match = re.match(r'^\s*(`{3,}|~{3,})(.*)$', line)
+        if fence is None and match:
+            fence, language = match[1], match[2].strip().lower()
+            current = []
+        elif fence is not None and match and match[1][0] == fence[0] and len(match[1]) >= len(fence) and not match[2].strip():
+            if language not in ('mermaid', 'dot', 'text', 'plaintext'):
+                blocks.append((language, '\n'.join(current)))
+            fence = None
+        elif fence is not None:
+            current.append(line)
+    if fence is not None:
+        raise SetupError('Unclosed Markdown code fence')
+    substitutions = set(re.findall(r'\$\{[^}\n]+\}|\{\{[^}\n]+\}\}|\{[A-Z][A-Z0-9_]*\}', text))
+    return blocks, substitutions
+
+
+def unresolved_references(bundle):
+    missing = set()
+    for path in bundle.rglob('*.md'):
+        text = read(path)
+        references = re.findall(r'\]\(([^\s)]+)', text)
+        references += re.findall(r'`((?:\.{1,2}/|scripts/|references/|templates/)[^`\s]+)', text)
+        for target in references:
+            target = target.strip('<>')
+            if target.startswith(('#', '/', '~')) or re.match(r'[a-zA-Z][\w+.-]*:', target):
+                continue
+            if any(char in target for char in ('{', '}', '*', '<', '>')):
+                continue
+            relative = urllib.parse.unquote(target.split('#')[0].split('?')[0])
+            resolved = (path.parent / relative).resolve()
+            if relative and (not resolved.is_relative_to(bundle.resolve()) or not resolved.exists()):
+                missing.add((path.relative_to(bundle).as_posix(), target))
+        for name in re.findall(r'\bsuperpowers:([a-z0-9]+(?:-[a-z0-9]+)*)', text):
+            if not (bundle / 'skills' / name / 'SKILL.md').is_file():
+                missing.add((path.relative_to(bundle).as_posix(), 'superpowers:' + name))
+    return missing
+
+
+def compatibility_issues(previous, candidate):
+    """Conservative installer contract; workflow prose is intentionally allowed."""
+    def files(root):
+        return {p.relative_to(root).as_posix(): p for p in root.rglob('*') if p.is_file()}
+    old, new = files(previous), files(candidate)
+    issues = [f'Removed bundled file: {name}' for name in sorted(old.keys() - new.keys())]
+    for name, path in sorted(new.items()):
+        earlier = old.get(name)
+        if earlier and fingerprint(earlier) == fingerprint(path):
+            continue
+        if path.suffix != '.md':
+            if name != 'LICENSE':
+                issues.append(f'{"Changed" if earlier else "Added"} helper or non-prose asset requires review: {name}')
+            continue
+        try:
+            after_blocks, after_substitutions = markdown_contract(read(path))
+            if earlier:
+                before_blocks, before_substitutions = markdown_contract(read(earlier))
+                if before_blocks != after_blocks:
+                    issues.append(f'Executable/example code blocks changed: {name}')
+                if before_substitutions != after_substitutions:
+                    issues.append(f'Template/runtime substitutions changed: {name}')
+            elif after_blocks or after_substitutions:
+                issues.append(f'New executable examples or substitutions require review: {name}')
+        except SetupError as exc:
+            issues.append(f'{name}: {exc}')
+    for name, target in sorted(unresolved_references(candidate) - unresolved_references(previous)):
+        issues.append(f'New unresolved reference in {name}: {target}')
+    return issues
+
+
+def validate_ref_installations(previous, candidate, temporary):
+    """Exercise both adapters with temporary homes, without running upstream code."""
+    for major in ('1', '2'):
+        home = temporary / ('validation-home-' + major)
+        common = ['--home', str(home), '--only', ','.join(HARNESSES), '--opencode-version', major]
+        layout = Layout(str(home))
+        with contextlib.redirect_stdout(io.StringIO()):
+            main(common + ['--source', str(previous)])
+            main(common + ['--source', str(candidate)])
+            installed = fingerprint(home)
+            main(common + ['--source', str(candidate)])
+            if fingerprint(home) != installed:
+                raise SetupError(f'OpenCode v{major} validation: repeated update is not idempotent')
+            state = load_manifest(layout)
+            for record in state['harnesses'].values():
+                if fingerprint(layout.store / 'bundles' / record['bundle']) != record['bundle']:
+                    raise SetupError('Candidate library failed content verification')
+                for entry in record['entries'].values():
+                    if fingerprint(Path(entry['path'])) != entry['digest']:
+                        raise SetupError('Candidate entry failed ownership verification')
+            main(common + ['--uninstall', '--prune'])
+            if load_manifest(layout)['harnesses'] or any(layout.entry(h, 'superpowers-' + s).exists() for h in HARNESSES for s in DEFAULT_SKILLS):
+                raise SetupError('Candidate uninstall validation failed')
+            if any(layout.config(h).exists() for h in ('codex', 'opencode')):
+                raise SetupError('Candidate uninstall left owned configuration')
+            main(common + ['--source', str(candidate)])
+            main(common + ['--uninstall', '--prune'])
+
+
+def update_default_ref(dry_run=False):
+    script = Path(__file__).resolve()
+    lock_path = script.with_name('.superpowers-lite-ref.lock')
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as exc:
+        raise SetupError(f'Ref updater lock exists: {lock_path}. If no updater is running, remove this stale lock and retry.') from exc
+    os.close(fd)
+    try:
+        expected = fingerprint(script)
+        original = script.read_bytes()
+        pattern = rb"(?m)^DEFAULT_REF = '([0-9a-fA-F]{40})'\r?$"
+        matches = list(re.finditer(pattern, original))
+        if len(matches) != 1 or matches[0][1].decode() != DEFAULT_REF:
+            raise SetupError('Cannot identify the current DEFAULT_REF assignment; script left unchanged.')
+        with tempfile.TemporaryDirectory(prefix='superpowers-ref-check-') as temp:
+            temporary = Path(temp)
+            candidate, provenance = fetch_source('HEAD', None, temporary / 'candidate')
+            latest = provenance['git_commit']
+            if latest == DEFAULT_REF:
+                print(f'DEFAULT_REF is already current: {latest}')
+                return
+            previous, _ = fetch_source(DEFAULT_REF, None, temporary / 'previous')
+            print(f'Checking installer compatibility: {DEFAULT_REF} -> {latest}')
+            try:
+                old_bundle, _, _ = build_bundle(previous, temporary / 'previous')
+                new_bundle, _, _ = build_bundle(candidate, temporary / 'candidate')
+                issues = compatibility_issues(old_bundle, new_bundle)
+                if issues:
+                    raise SetupError('\n  ' + '\n  '.join(issues))
+                validate_ref_installations(previous, candidate, temporary)
+            except (SetupError, OSError, ValueError) as exc:
+                raise SetupError(f'Compatibility check rejected {DEFAULT_REF} -> {latest}; DEFAULT_REF unchanged.\n{exc}') from exc
+            start, end = matches[0].span(1)
+            updated = original[:start] + latest.encode('ascii') + original[end:]
+            compile(updated, str(script), 'exec')
+            if fingerprint(script) != expected:
+                raise SetupError('Installer changed during validation; DEFAULT_REF left unchanged.')
+            if dry_run:
+                print(f'Compatible candidate: {DEFAULT_REF} -> {latest}. Dry run: script unchanged.')
+                return
+            stage = None
+            try:
+                with tempfile.NamedTemporaryFile(prefix='.superpowers-ref-', dir=script.parent, delete=False) as stream:
+                    stage = Path(stream.name)
+                    stream.write(updated)
+                stage.chmod(stat.S_IMODE(script.stat().st_mode))
+                if fingerprint(script) != expected:
+                    raise SetupError('Installer changed before replacement; DEFAULT_REF left unchanged.')
+                os.replace(stage, script)
+            finally:
+                if stage is not None:
+                    stage.unlink(missing_ok=True)
+            print(f'Updated DEFAULT_REF: {DEFAULT_REF} -> {latest}. Existing installations were not changed.')
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
 def parser():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--source', help='local upstream checkout; exact content fingerprint recorded')
-    ap.add_argument('--ref', default=DEFAULT_REF, help='commit/tag/branch; default is an audited pinned SHA')
+    ap.add_argument('--ref', default=DEFAULT_REF, help=f'commit/tag/branch; pinned default: {DEFAULT_REF}')
     ap.add_argument('--skills', default=','.join(DEFAULT_SKILLS), help='public entry skills; dependency library remains private')
     ap.add_argument('--name-prefix', default='superpowers-')
     ap.add_argument('--only', help='codex,opencode,claude; explicit selection also works before a CLI exists')
@@ -1062,11 +1222,18 @@ def parser():
     ap.add_argument('--recover', action='store_true', help='recover interrupted transaction; ensure no installer is running')
     ap.add_argument('--audit', action='store_true', help='report known full-bootstrap conflicts without installing')
     ap.add_argument('--dry-run', action='store_true', help='build and validate the entire plan without target writes')
+    ap.add_argument('--update-default-ref', action='store_true', help='validate latest upstream compatibility, then update this script in place; optionally --dry-run')
     return ap
 
 
 def main(argv=None):
     args = parser().parse_args(argv)
+    if args.update_default_ref:
+        supplied = sys.argv[1:] if argv is None else argv
+        if any(value not in ('--update-default-ref', '--dry-run') for value in supplied):
+            raise SetupError('--update-default-ref accepts only --dry-run; it does not modify installations.')
+        update_default_ref(args.dry_run)
+        return 0
     if args.only:
         names = [x.strip() for x in args.only.split(',')]
         if not names or any(x not in HARNESSES for x in names):

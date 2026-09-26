@@ -629,5 +629,141 @@ array = [1, 2, 3]
             self.assertFalse((Path(tmp) / 'escape').exists())
 
 
+class RefUpdateTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='lite-ref-tests-')
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.previous = self.base / 'previous-source'
+        self.candidate = self.base / 'candidate-source'
+        for name in lite.DEFAULT_SKILLS:
+            put(self.previous / 'skills' / name / 'SKILL.md', f'---\nname: {name}\ndescription: Example\n---\nFollow the workflow.\n')
+        put(self.previous / 'skills/brainstorming/scripts/helper', '#!/bin/sh\necho original\n')
+        put(self.previous / 'skills/brainstorming/reviewer.md', 'Review {{TASK}} carefully.\n')
+        shutil.copytree(self.previous, self.candidate)
+        self.script = self.base / 'superpowers-lite.py'
+        self.original = (f"# preserve this file\r\nDEFAULT_REF = '{lite.DEFAULT_REF}'\r\n# trailing comment\r\n").encode()
+        self.script.write_bytes(self.original)
+        self.latest = 'a' * 40
+        self.actual_fetch = lite.fetch_source
+
+    def fetch(self, ref, local, temporary):
+        if local:
+            return self.actual_fetch(ref, local, temporary)
+        temporary.mkdir(parents=True)
+        return (self.candidate if ref == 'HEAD' else self.previous), {'git_commit': self.latest if ref == 'HEAD' else lite.DEFAULT_REF}
+
+    def update(self, dry_run=False):
+        with patch.object(lite, '__file__', str(self.script)), patch.object(lite, 'fetch_source', side_effect=self.fetch), contextlib.redirect_stdout(io.StringIO()):
+            lite.update_default_ref(dry_run)
+
+    def assert_rejected(self, message):
+        with self.assertRaisesRegex(lite.SetupError, message):
+            self.update()
+        self.assertEqual(self.script.read_bytes(), self.original)
+        self.assertFalse((self.base / '.superpowers-lite-ref.lock').exists())
+
+    def test_prose_update_runs_installation_checks_and_only_changes_pin(self):
+        path = self.candidate / 'skills/brainstorming/SKILL.md'
+        put(path, path.read_text() + '\nClarify the desired outcome with the user.\n')
+        self.update()
+        self.assertEqual(self.script.read_bytes(), self.original.replace(lite.DEFAULT_REF.encode(), self.latest.encode()))
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX executable permission check')
+    def test_update_preserves_script_permissions(self):
+        self.script.chmod(0o750)
+        self.update()
+        self.assertEqual(stat.S_IMODE(self.script.stat().st_mode), 0o750)
+
+    def test_dry_run_preserves_script(self):
+        self.update(dry_run=True)
+        self.assertEqual(self.script.read_bytes(), self.original)
+
+    def test_current_pin_does_not_rewrite_script(self):
+        self.latest = lite.DEFAULT_REF
+        self.update()
+        self.assertEqual(self.script.read_bytes(), self.original)
+
+    def test_removed_template_is_reported(self):
+        (self.candidate / 'skills/brainstorming/reviewer.md').unlink()
+        self.assert_rejected('Removed bundled file: skills/brainstorming/reviewer.md')
+
+    def test_changed_helper_is_reported(self):
+        put(self.candidate / 'skills/brainstorming/scripts/helper', '#!/bin/sh\necho changed\n')
+        self.assert_rejected('Changed helper')
+
+    def test_new_helper_requires_review(self):
+        put(self.candidate / 'skills/brainstorming/scripts/new-helper', '#!/bin/sh\necho new\n')
+        self.assert_rejected('Added helper')
+
+    def test_behavioral_metadata_is_reported(self):
+        put(self.candidate / 'skills/brainstorming/SKILL.md', '---\nname: brainstorming\nhooks: {}\n---\nDo work.\n')
+        self.assert_rejected('unsupported upstream frontmatter')
+
+    def test_changed_executable_example_is_reported(self):
+        path = self.candidate / 'skills/brainstorming/SKILL.md'
+        put(path, path.read_text() + '\n```sh\nnew-helper --changed-interface\n```\n')
+        self.assert_rejected('Executable/example code blocks changed')
+
+    def test_new_broken_reference_is_reported(self):
+        path = self.candidate / 'skills/brainstorming/SKILL.md'
+        put(path, path.read_text() + '\nRead [instructions](missing.md).\n')
+        self.assert_rejected('New unresolved reference.*missing.md')
+
+    def test_new_missing_skill_reference_is_reported(self):
+        path = self.candidate / 'skills/brainstorming/SKILL.md'
+        put(path, path.read_text() + '\nUse superpowers:missing-skill.\n')
+        self.assert_rejected('New unresolved reference.*superpowers:missing-skill')
+
+    def test_existing_unresolved_reference_does_not_block_prose(self):
+        for root in (self.previous, self.candidate):
+            path = root / 'skills/brainstorming/SKILL.md'
+            put(path, path.read_text() + '\n[repository docs](../../docs/guide.md)\n')
+        self.update()
+
+    def test_template_substitution_changes_are_reported(self):
+        put(self.candidate / 'skills/brainstorming/reviewer.md', 'Review {{DIFFERENT_TASK}} carefully.\n')
+        self.assert_rejected('Template/runtime substitutions changed')
+
+    def test_failed_installation_validation_preserves_pin(self):
+        with patch.object(lite, 'validate_ref_installations', side_effect=lite.SetupError('fixture incompatibility')):
+            self.assert_rejected('fixture incompatibility')
+
+    def test_concurrent_script_edit_is_preserved(self):
+        def edit(*args):
+            self.script.write_bytes(self.original + b'# user edit\n')
+        with patch.object(lite, 'validate_ref_installations', side_effect=edit):
+            with self.assertRaisesRegex(lite.SetupError, 'changed during validation'):
+                self.update()
+        self.assertTrue(self.script.read_bytes().endswith(b'# user edit\n'))
+
+    def test_network_failure_cleans_up_lock(self):
+        with patch.object(lite, '__file__', str(self.script)), patch.object(lite, 'fetch_source', side_effect=OSError('network unavailable')):
+            with self.assertRaisesRegex(OSError, 'network unavailable'):
+                lite.update_default_ref()
+        self.assertEqual(self.script.read_bytes(), self.original)
+        self.assertFalse((self.base / '.superpowers-lite-ref.lock').exists())
+
+    def test_replacement_failure_preserves_script_and_cleans_stage(self):
+        with patch.object(lite, 'validate_ref_installations'), patch.object(lite.os, 'replace', side_effect=OSError('replacement failure')):
+            with self.assertRaisesRegex(OSError, 'replacement failure'):
+                self.update()
+        self.assertEqual(self.script.read_bytes(), self.original)
+        self.assertFalse(list(self.base.glob('.superpowers-ref-*')))
+        self.assertFalse((self.base / '.superpowers-lite-ref.lock').exists())
+
+    def test_concurrent_updater_cannot_remove_existing_lock(self):
+        lock = self.base / '.superpowers-lite-ref.lock'
+        put(lock, '')
+        with self.assertRaisesRegex(lite.SetupError, 'updater lock exists'):
+            self.update()
+        self.assertTrue(lock.exists())
+        self.assertEqual(self.script.read_bytes(), self.original)
+
+    def test_updater_rejects_install_flags(self):
+        with self.assertRaisesRegex(lite.SetupError, 'accepts only --dry-run'):
+            lite.main(['--update-default-ref', '--only', 'codex'])
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -50,7 +50,7 @@ The full supporting skill library lives outside discovery roots, under `~/.local
 
 ## Source and configuration decisions
 
-The default source is the reviewed Superpowers commit `5bf4e78011075bcfc0dc295f0724994cd123ee71` (upstream plugin version 6.4.1). Updates are explicit:
+The script's `DEFAULT_REF` constant selects the pinned default source. The original reviewed baseline is Superpowers commit `5bf4e78011075bcfc0dc295f0724994cd123ee71` (upstream plugin version 6.4.1). One-off source overrides are explicit:
 
 ```text
 python superpowers-lite.py --ref <commit-or-tag> --dry-run
@@ -58,6 +58,19 @@ python superpowers-lite.py --source /path/to/local/superpowers --dry-run
 ```
 
 Remote tags/branches resolve to an exact commit before downloading. The manifest records that commit, archive SHA-256, library content hash, and installer version. A local checkout records its path, Git HEAD when available, and actual installed content hash; local edits are included. An upstream behavioral frontmatter extension, such as hooks or special agent context, is rejected for review rather than silently discarded. Descriptive upstream headers stay in the private library as data; harness policy files are generated independently.
+
+To check the latest commit on upstream's default branch and update the script's pin in place:
+
+```text
+python superpowers-lite.py --update-default-ref --dry-run
+python superpowers-lite.py --update-default-ref
+```
+
+This mode accepts only the optional `--dry-run` flag. It downloads both revisions, checks compatibility, and exercises fresh install, update, repeated update, and uninstall in temporary homes for all three harnesses and both OpenCode adapters. It does not run upstream helpers or native harnesses. On success it atomically replaces only the `DEFAULT_REF` value, preserving the script's other bytes and permission bits. Existing installations are unchanged; run a normal installation afterward to update them.
+
+The compatibility check allows workflow prose changes, static diagrams, and new prose-only Markdown resources. It rejects removed bundled files, unsupported skill metadata, changed or added helper/non-prose assets, changed executable/example code blocks, changed template substitutions, and new unresolved local or `superpowers:` skill references. Existing unresolved references do not by themselves block an update. Failures exit nonzero, report the affected files or validation error, and leave the pin unchanged. A rejection means the change needs manual compatibility review; it is not necessarily proof of an upstream defect. There is no override flag.
+
+This is an installer-compatibility check, not a semantic audit of workflow prose or a guarantee of model behavior. Changed helper implementations require review even if their interfaces happen to remain compatible. Concurrent ref updaters are excluded by a sibling `.superpowers-lite-ref.lock`; after an interrupted updater, ensure it is no longer running before removing that stale lock and retrying.
 
 Normal installation honors `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG`, `XDG_CONFIG_HOME`, and `XDG_DATA_HOME`. If both OpenCode JSON and JSONC files exist, select the effective target with `--opencode-config`. Other config layers may still override it. Use the same environment/path settings for later updates and uninstall.
 
