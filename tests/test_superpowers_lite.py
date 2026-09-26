@@ -88,6 +88,27 @@ class InstallerTests(unittest.TestCase):
         self.run_cli('--dry-run')
         self.assertFalse(self.home.exists())
 
+    def test_lock_covers_manifest_read_and_source_download(self):
+        original = lite.fetch_source
+        def competing_install(*args):
+            with self.assertRaisesRegex(lite.SetupError, 'Install lock exists'):
+                self.run_cli('--only', 'claude')
+            return original(*args)
+        original_load = lite.load_manifest
+        def read_locked(layout):
+            self.assertTrue((layout.store / 'install.lock').exists())
+            return original_load(layout)
+        with patch.object(lite, 'fetch_source', side_effect=competing_install), patch.object(lite, 'load_manifest', side_effect=read_locked):
+            self.run_cli('--only', 'codex')
+        self.run_cli('--only', 'claude')
+        self.assertEqual(set(self.manifest()['harnesses']), {'codex', 'claude'})
+
+    def test_failed_planning_releases_lock_and_empty_directories(self):
+        with self.assertRaises(lite.SetupError):
+            self.run_cli('--skills', 'nonexistent')
+        self.assertFalse(self.home.exists())
+        self.run_cli()
+
     def test_private_paths_and_bootstrap_omission(self):
         self.run_cli('--skills', 'brainstorming')
         state = self.manifest()

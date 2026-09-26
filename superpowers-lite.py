@@ -471,6 +471,43 @@ class ConfigEdit:
         return dump_toml(self.data) if self.path.suffix == '.toml' else json_bytes(self.data)
 
 
+class InstallLock:
+    """Serialize planning and application, including reads of ownership state."""
+    def __init__(self, store):
+        self.store = store
+        self.path = store / 'install.lock'
+        self.pending = False
+        self.active = False
+        self.created_dirs = []
+
+    def __enter__(self):
+        parent = self.store
+        while not parent.exists():
+            self.created_dirs.append(parent)
+            parent = parent.parent
+        self.store.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError as exc:
+            raise SetupError(f'Install lock exists: {self.path}. Ensure no installer is running before --recover.') from exc
+        self.active = True
+        try:
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(json_bytes({'pid': os.getpid(), 'transaction': None}))
+        except BaseException:
+            self.__exit__(*sys.exc_info())
+            raise
+        return self
+
+    def __exit__(self, *exc):
+        if self.active and not self.pending:
+            self.path.unlink(missing_ok=True)
+            self.active = False
+            for directory in self.created_dirs:
+                with contextlib.suppress(OSError):
+                    directory.rmdir()
+
+
 class Plan:
     def __init__(self, store):
         self.store = store
@@ -493,21 +530,20 @@ class Plan:
         for path, change in self.changes.items():
             print(f'  {"remove" if change["content"] is None else "write"} {path} ({change["label"]})')
 
-    def apply(self, fail_after=None):
+    def apply(self, fail_after=None, lock=None):
+        if lock is None:
+            with InstallLock(self.store) as acquired:
+                return self.apply(fail_after=fail_after, lock=acquired)
+        if not lock.active or lock.store != self.store:
+            raise SetupError('Plan requires the active lock for its installation store.')
         if not self.changes:
             print('Already up to date.')
             return None
-        self.store.mkdir(parents=True, exist_ok=True)
-        lock = self.store / 'install.lock'
-        try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError as exc:
-            raise SetupError(f'Install lock exists: {lock}. Ensure no installer is running before --recover.') from exc
         ident = uuid.uuid4().hex
         tx = self.store / 'transactions' / ident
         tx.mkdir(parents=True, mode=0o700)
-        os.write(fd, json_bytes({'pid': os.getpid(), 'transaction': ident}))
-        os.close(fd)
+        lock.path.write_bytes(json_bytes({'pid': os.getpid(), 'transaction': ident}))
+        lock.pending = True
         journal = {'schema': SCHEMA, 'status': 'preparing', 'items': [], 'created_dirs': []}
         def save():
             tmp = tx / 'journal.tmp'
@@ -559,9 +595,9 @@ class Plan:
             raise
         finally:
             if journal['status'] == 'rolled-back':
-                lock.unlink(missing_ok=True)
+                lock.pending = False
         archive_backups(tx, journal)
-        lock.unlink(missing_ok=True)
+        lock.pending = False
         print(f'Committed. Backups/journal: {tx}')
         return tx
 
@@ -975,16 +1011,14 @@ def main(argv=None):
             print('CONFLICT: ' + item)
         print('No known bootstrap entry points found.' if not conflicts else 'Disable full installs before installing Lite.')
         return int(bool(conflicts))
-    if (layout.store / 'install.lock').exists():
-        raise SetupError('An install lock exists; finish/recover that transaction first.')
-    with tempfile.TemporaryDirectory(prefix='superpowers-lite-') as temporary:
+    with InstallLock(layout.store) as lock, tempfile.TemporaryDirectory(prefix='superpowers-lite-') as temporary:
         plan, state, selected = prepare(args, layout, Path(temporary))
         print('Validated plan:')
         plan.display()
         if args.dry_run:
             print('Dry run: no installation targets changed.')
         else:
-            plan.apply()
+            plan.apply(lock=lock)
         if not args.uninstall:
             for harness in sorted(selected):
                 prefix = '$' if harness == 'codex' else '/'
