@@ -422,6 +422,7 @@ def set_at(data, path, present, value):
 
 class ConfigEdit:
     def __init__(self, path):
+        self.format = 'toml' if path.suffix == '.toml' else 'json'
         self.path = path.resolve() if linked(path) else path.absolute()
         self.before = fingerprint(self.path)
         self.original = self.path.read_bytes() if self.path.exists() else None
@@ -430,7 +431,7 @@ class ConfigEdit:
         self.created = self.original is None
         text = self.original.decode('utf-8-sig') if self.original else ''
         try:
-            self.data = tomllib.loads(text) if path.suffix == '.toml' else load_json(text or '{}')
+            self.data = tomllib.loads(text) if self.format == 'toml' else load_json(text or '{}')
         except (ValueError, UnicodeError) as exc:
             raise SetupError(f'{path}: {exc}') from exc
         if not isinstance(self.data, dict):
@@ -493,9 +494,9 @@ class ConfigEdit:
     def result(self):
         if self.created and not self.data:
             return None
-        if self.data == self.initial and (self.path.suffix == '.toml' or json_bytes(self.data) == json_bytes(self.initial)):
+        if self.data == self.initial and (self.format == 'toml' or json_bytes(self.data) == json_bytes(self.initial)):
             return self.original
-        return dump_toml(self.data) if self.path.suffix == '.toml' else json_bytes(self.data)
+        return dump_toml(self.data) if self.format == 'toml' else json_bytes(self.data)
 
 
 class InstallLock:

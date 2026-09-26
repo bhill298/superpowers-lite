@@ -268,6 +268,22 @@ class InstallerTests(unittest.TestCase):
         self.run_cli('--uninstall', '--only', 'codex')
         self.assertEqual(lite.tomllib.loads(cfg.read_text()), {'features': {'other': True}, 'agents': {'default_subagent_model': 'old'}})
 
+    def test_symlink_config_format_survives_install_update_uninstall(self):
+        cfg = self.layout.config('codex')
+        target = self.base / 'dotfiles' / 'codex-config'
+        put(target, 'model = "original"\n')
+        cfg.parent.mkdir(parents=True)
+        try:
+            cfg.symlink_to(target)
+        except OSError:
+            self.skipTest('File symlinks require privileges on this platform')
+        self.run_cli('--only', 'codex', '--enable-codex-multi-agent')
+        self.assertTrue(lite.tomllib.loads(target.read_text())['features']['multi_agent'])
+        self.run_cli('--only', 'codex')
+        self.run_cli('--only', 'codex', '--uninstall')
+        self.assertTrue(cfg.is_symlink())
+        self.assertEqual(lite.tomllib.loads(target.read_text()), {'model': 'original'})
+
     def test_invalid_config_fails_before_writes(self):
         put(self.layout.config('opencode'), '{"permission": ["bad"]}')
         before = self.snapshot(self.home)
