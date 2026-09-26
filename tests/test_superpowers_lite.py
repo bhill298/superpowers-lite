@@ -477,6 +477,39 @@ class InstallerTests(unittest.TestCase):
         with self.assertRaisesRegex(lite.SetupError, 'No interrupted'):
             self.run_cli('--recover')
 
+    def test_recover_early_initialization_windows(self):
+        lock = self.layout.store / 'install.lock'
+        for phase in ('empty', 'planning', 'directory', 'temporary-journal'):
+            with self.subTest(phase=phase):
+                ident = ('%032x' % len(phase))
+                tx = self.layout.store / 'transactions' / ident
+                put(lock, '' if phase == 'empty' else json.dumps({'pid': 12345, 'transaction': ident}))
+                if phase in ('directory', 'temporary-journal'):
+                    tx.mkdir(parents=True, exist_ok=True)
+                if phase == 'temporary-journal':
+                    put(tx / 'journal.tmp', '{"schema": 2, "status": "preparing", "items": []}')
+                self.run_cli('--recover')
+                self.assertFalse(lock.exists())
+        self.run_cli()
+
+    def test_initial_journal_failure_releases_lock(self):
+        plan, _, _ = self.prepare()
+        with patch.object(lite.os, 'replace', side_effect=OSError('journal failure')):
+            with self.assertRaisesRegex(OSError, 'journal failure'):
+                plan.apply()
+        self.assertFalse((self.layout.store / 'install.lock').exists())
+        self.assertFalse(self.layout.manifest.exists())
+        self.run_cli()
+
+    def test_missing_journal_with_backup_is_not_cleared(self):
+        ident = 'a' * 32
+        lock = self.layout.store / 'install.lock'
+        put(lock, json.dumps({'pid': 12345, 'transaction': ident}))
+        put(self.layout.store / 'transactions' / ident / 'backups' / '0', 'original')
+        with self.assertRaisesRegex(lite.SetupError, 'unexpected transaction files'):
+            self.run_cli('--recover')
+        self.assertTrue(lock.exists())
+
     def test_recover_committed_backup_cleanup(self):
         self.run_cli()
         plan, _, _ = self.prepare('--skills', 'verification-before-completion')

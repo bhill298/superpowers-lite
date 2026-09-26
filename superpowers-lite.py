@@ -504,6 +504,7 @@ class InstallLock:
     def __init__(self, store):
         self.store = store
         self.path = store / 'install.lock'
+        self.ident = uuid.uuid4().hex
         self.pending = False
         self.active = False
         self.created_dirs = []
@@ -521,7 +522,7 @@ class InstallLock:
         self.active = True
         try:
             with os.fdopen(fd, 'wb') as stream:
-                stream.write(json_bytes({'pid': os.getpid(), 'transaction': None}))
+                stream.write(json_bytes({'pid': os.getpid(), 'transaction': self.ident}))
         except BaseException:
             self.__exit__(*sys.exc_info())
             raise
@@ -569,16 +570,19 @@ class Plan:
         if not self.changes:
             print('Already up to date.')
             return None
-        ident = uuid.uuid4().hex
+        ident = lock.ident
         tx = self.store / 'transactions' / ident
         tx.mkdir(parents=True, mode=0o700)
-        lock.path.write_bytes(json_bytes({'pid': os.getpid(), 'transaction': ident}))
-        lock.pending = True
         journal = {'schema': SCHEMA, 'status': 'preparing', 'items': [], 'created_dirs': []}
         def save():
             tmp = tx / 'journal.tmp'
             tmp.write_bytes(json_bytes(journal))
             os.replace(tmp, tx / 'journal.json')
+        # No destination can change before this initial journal is published.
+        # Never rewrite the lock: even a crash during journal initialization
+        # leaves an unambiguous transaction identifier for recovery.
+        save()
+        lock.pending = True
         try:
             for path, change in self.changes.items():
                 if fingerprint(path) != change['before']:
@@ -667,11 +671,33 @@ def recover(store):
     lock = store / 'install.lock'
     if not lock.exists():
         raise SetupError('No interrupted transaction lock exists.')
-    info = load_json(read(lock))
+    raw = read(lock)
+    if not raw.strip():
+        # An empty lock can only be left between exclusive creation and its
+        # first write. Be conservative if older incomplete journals exist.
+        for path in (store / 'transactions').glob('*/journal.json'):
+            if load_json(read(path)).get('status') not in ('committed', 'rolled-back'):
+                raise SetupError(f'Empty lock with an incomplete journal; inspect {path} before removing the lock.')
+        lock.unlink()
+        print('Recovered interrupted lock initialization; no targets were changed.')
+        return
+    info = load_json(raw)
+    if not isinstance(info, dict):
+        raise SetupError('Invalid transaction lock')
     ident = info.get('transaction', '')
+    if ident is None and isinstance(info.get('pid'), int):
+        lock.unlink()
+        print('Recovered interrupted planning; no targets were changed.')
+        return
     if not re.fullmatch('[a-f0-9]{32}', ident):
         raise SetupError('Invalid transaction lock')
     tx = store / 'transactions' / ident
+    if not (tx / 'journal.json').exists():
+        if tx.exists() and any(p.name != 'journal.tmp' for p in tx.iterdir()):
+            raise SetupError(f'Missing recovery journal with unexpected transaction files: {tx}')
+        lock.unlink()
+        print(f'Recovered transaction initialization {ident}; no targets were changed.')
+        return
     journal = load_json(read(tx / 'journal.json'))
     if journal.get('schema') != SCHEMA:
         raise SetupError('Unsupported recovery journal')
