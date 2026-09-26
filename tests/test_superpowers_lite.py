@@ -36,7 +36,7 @@ class InstallerTests(unittest.TestCase):
         put(self.source / 'skills' / 'using-superpowers' / 'references' / 'codex-tools.md', '# Tools\n')
         put(self.source / 'skills' / 'executing-plans' / 'scripts' / 'task-start', '#!/usr/bin/env bash\r\nset -eu\r\n"$(dirname "$0")/../../subagent-driven-development/scripts/task-brief"\r\n')
         put(self.source / 'skills' / 'subagent-driven-development' / 'scripts' / 'task-brief', '#!/usr/bin/env bash\r\necho helper-ok\r\n')
-        self.args = ['--home', str(self.home), '--source', str(self.source), '--only', 'codex,opencode,claude', '--opencode-version', '1']
+        self.args = ['--home', str(self.home), '--source', str(self.source), '--only', ','.join(lite.HARNESSES), '--opencode-version', '1']
 
     def run_cli(self, *args):
         with contextlib.redirect_stdout(io.StringIO()):

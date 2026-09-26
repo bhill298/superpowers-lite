@@ -30,7 +30,7 @@ if sys.version_info < (3, 11):
     raise SystemExit('Python 3.11 or newer is required for validated TOML configuration.')
 import tomllib
 
-VERSION = '2.1.0'
+VERSION = '2.2.0'
 SCHEMA = 3
 REPO = 'obra/superpowers'
 DEFAULT_REF = '5bf4e78011075bcfc0dc295f0724994cd123ee71'
@@ -38,7 +38,7 @@ DEFAULT_SKILLS = ['brainstorming', 'writing-plans', 'subagent-driven-development
 NEVER_INSTALL = {'using-superpowers', 'diagnosing-superpowers'}
 MARKER = '.superpowers-lite.json'
 ENV_VAR = 'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS'
-HARNESSES = ('codex', 'opencode', 'claude')
+HARNESSES = ('codex', 'opencode', 'claude', 'pi')
 NAME_RE = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*\Z')
 OLD_BLOCK_RE = re.compile(r'\n?<!-- superpowers-lite:\w+:begin -->.*?<!-- superpowers-lite:\w+:end -->\n?', re.S)
 UNSPECIFIED = object()
@@ -221,6 +221,7 @@ class Layout:
             return Path(os.environ.get(var, str(default))).expanduser().absolute() if home is None else default
         self.codex = env('CODEX_HOME', self.home / '.codex')
         self.claude = env('CLAUDE_CONFIG_DIR', self.home / '.claude')
+        self.pi = env('PI_CODING_AGENT_DIR', self.home / '.pi' / 'agent')
         self.opencode = env('OPENCODE_CONFIG_DIR', env('XDG_CONFIG_HOME', self.home / '.config') / 'opencode')
         self.store = env('XDG_DATA_HOME', self.home / '.local' / 'share') / 'superpowers-lite'
         self.manifest = self.store / 'manifest.json'
@@ -230,7 +231,7 @@ class Layout:
     def entry(self, harness, name):
         if harness == 'claude':
             return self.claude / 'commands' / (name + '.md')
-        return (self.codex if harness == 'codex' else self.opencode) / 'skills' / name
+        return getattr(self, harness) / 'skills' / name
 
     def config(self, harness):
         if harness == 'codex':
@@ -245,6 +246,8 @@ class Layout:
     def instruction_paths(self, harness):
         if harness == 'codex':
             return [self.codex / 'AGENTS.md', self.codex / 'AGENTS.override.md']
+        if harness == 'pi':
+            return [self.pi / name for name in ('AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE.MD')]
         return [self.claude / 'CLAUDE.md' if harness == 'claude' else self.opencode / 'AGENTS.md']
 
 
@@ -366,6 +369,7 @@ TOOL_NOTES = {
     'opencode1': 'Use task with subagent_type "general" for subagents; todowrite for todos; read for files; bash for shell commands. Follow the actual exposed tool schemas.',
     'opencode2': 'Use subagent with agent "general" for subagents, read for files, and shell for shell commands. Keep a Markdown checklist when no todo tool is exposed. Follow the actual exposed tool schemas.',
     'claude': 'Use Agent (or Task on older versions) with general-purpose for subagents and the available native task/todo tools. Respect the actual tool schemas and nested-agent limits of this version.',
+    'pi': 'Use Pi read, bash, edit, and write tools according to their actual schemas. Keep a Markdown checklist when no task/todo tool is exposed. Pi has no built-in subagents; an installed extension may expose a delegation tool such as subagent. Inspect the available tool description, supported modes, and configured agent roles before calling it; do not assume Codex, Claude, or OpenCode tool names or arguments. Use isolated child context for implementation/review tasks and pass the task brief, project directory, required private skill paths, and report contract explicitly. Use only supported model/effort controls and preserve explicit user constraints; never substitute a different model when a requested override fails. For fix rounds, use the extension\'s resume facility if available; otherwise send a fresh isolated worker the prior report and precise remaining findings, without claiming it resumed. If a required delegation or independent review cannot be performed with the available tools/roles, stop at that step and explain which capability is missing. Do not simulate subagents by doing their work yourself or silently replace independent review with self-review. Lite does not install extensions or agent definitions.',
 }
 
 
@@ -893,6 +897,19 @@ def plugin_conflicts(layout, harnesses):
     if 'claude' in harnesses:
         configs += [d / n for d in [layout.claude] + [p / '.claude' for p in projects]
                     for n in ('settings.json', 'settings.local.json')]
+    if 'pi' in harnesses:
+        for directory in [layout.pi] + [p / '.pi' for p in projects]:
+            extensions = directory / 'extensions'
+            if extensions.is_dir():
+                issues.extend(str(p) for p in extensions.iterdir() if 'superpowers' in p.name.lower())
+            settings = directory / 'settings.json'
+            if settings.is_file():
+                data = load_json(read(settings))
+                if not isinstance(data, dict):
+                    raise SetupError(f'Invalid configuration object: {settings}')
+                for key in ('packages', 'extensions'):
+                    if 'superpowers' in json.dumps(data.get(key, [])).lower():
+                        issues.append(f'{settings}: {key}')
     for path in dict.fromkeys(configs):
         if not path.is_file():
             continue
@@ -921,6 +938,11 @@ def plugin_conflicts(layout, harnesses):
     for path in (layout.home / '.agents' / 'skills' / 'superpowers', layout.opencode / 'skills' / 'superpowers'):
         if exists(path) and not owned_marker(path):
             issues.append(f'{path}: full library remains discoverable')
+    if 'pi' in harnesses:
+        for root in [layout.pi / 'skills'] + [p / '.pi' / 'skills' for p in projects]:
+            for name in ('superpowers', 'using-superpowers'):
+                if exists(root / name):
+                    issues.append(f'{root / name}: full bootstrap remains discoverable')
     instructions = []
     if 'codex' in harnesses:
         instructions += [layout.codex / n for n in ('AGENTS.md', 'AGENTS.override.md')]
@@ -928,6 +950,8 @@ def plugin_conflicts(layout, harnesses):
         instructions += [layout.claude / 'CLAUDE.md']
     if 'opencode' in harnesses:
         instructions += [layout.opencode / 'AGENTS.md']
+    if 'pi' in harnesses:
+        instructions += layout.instruction_paths('pi')
     instructions += [p / n for p in projects for n in ('AGENTS.md', 'AGENTS.override.md', 'CLAUDE.md', '.claude/CLAUDE.md')]
     for path in dict.fromkeys(instructions):
         if path.is_file():
@@ -965,6 +989,29 @@ def cleanup_old_instructions(layout, harnesses, plan, instruction_edit):
             warn(f'{ENV_VAR} is set in this process. This installer no longer sets it. Restart after removing unmarked launcher settings; old Windows setx values have no ownership record and are not silently erased.')
 
 
+def pi_skill_files(root, root_files=True, seen=None):
+    """Conservative discovery scan; follow directory links without looping.
+
+    Pi allows a declared name to differ from the directory. Ignore filters are
+    deliberately not evaluated: ambiguous duplicates require reconciliation.
+    """
+    seen = set() if seen is None else seen
+    if not root.is_dir() or root.resolve() in seen:
+        return
+    seen.add(root.resolve())
+    skill = root / 'SKILL.md'
+    if skill.is_file():
+        yield skill
+        return
+    for path in sorted(root.iterdir()):
+        if path.name.startswith('.') or path.name == 'node_modules':
+            continue
+        if path.is_dir():
+            yield from pi_skill_files(path, False, seen)
+        elif root_files and path.suffix == '.md' and path.is_file():
+            yield path
+
+
 def check_collision(layout, harness, name, target, removed):
     projects = [] if layout.isolated else [Path.cwd(), *Path.cwd().parents]
     if harness == 'codex':
@@ -972,14 +1019,30 @@ def check_collision(layout, harness, name, target, removed):
         roots += [p / sub / 'skills' for p in projects for sub in ('.agents', '.codex')]
     elif harness == 'claude':
         roots = [layout.claude / 'skills'] + [p / '.claude' / 'skills' for p in projects]
+    elif harness == 'pi':
+        roots = [layout.pi / 'skills', layout.home / '.agents' / 'skills']
+        roots += [p / sub / 'skills' for p in projects for sub in ('.pi', '.agents')]
     else:
         roots = [layout.home / '.agents' / 'skills', layout.claude / 'skills', layout.opencode / 'skills']
         roots += [p / sub / 'skills' for p in projects for sub in ('.agents', '.claude', '.opencode')]
     candidates = [root / name for root in dict.fromkeys(roots)]
     if harness == 'claude':
         candidates += [p / 'commands' / (name + '.md') for p in [layout.claude] + [p / '.claude' for p in projects]]
-    if harness == 'opencode':
+    if harness in ('opencode', 'pi'):
         candidates += [root / (name + '.md') for root in dict.fromkeys(roots)]
+    if harness == 'pi':
+        root_skill = layout.pi / 'skills' / 'SKILL.md'
+        if root_skill.is_file():
+            raise SetupError(f'Pi skill root {root_skill} prevents discovery of nested Lite entries; move it to its own skill directory.')
+        for root in dict.fromkeys(roots):
+            for path in pi_skill_files(root, root.parent.name != '.agents'):
+                if path.parent == target or path.parent in removed:
+                    continue
+                text = read(path)
+                header = re.match(r'\A---\s*\n(.*?)\n---(?:\s|$)', text, re.S)
+                if header and (path.parent.name == name or re.search(
+                        r'^name:\s*[\'"]?' + re.escape(name) + r'[\'"]?\s*(?:#.*)?$', header[1], re.M)):
+                    candidates.append(path)
     for path in dict.fromkeys(candidates):
         if path.absolute() == target.absolute() or path in removed:
             continue
@@ -992,7 +1055,7 @@ def prepare(args, layout, temp):
     state = copy.deepcopy(old)
     selected = set(args.only.split(',')) if args.only else (set(old['harnesses']) if args.uninstall else detected(layout))
     if not selected or not selected <= set(HARNESSES):
-        raise SetupError('Select installed harnesses or explicitly pass --only codex,opencode,claude.')
+        raise SetupError('Select installed harnesses or explicitly pass --only ' + ','.join(HARNESSES) + '.')
     if args.uninstall:
         selected &= set(old['harnesses'])
         if not selected:
@@ -1048,6 +1111,11 @@ def prepare(args, layout, temp):
             override = layout.instruction_paths(harness)[1]
             if instruction_edit(override).data.decode('utf-8-sig').strip():
                 target = override
+        if guidance and harness == 'pi':
+            # Pi loads the first existing file, including an empty file. Append
+            # there so creating AGENTS.md does not hide an existing CLAUDE.md.
+            target = next((p for p in layout.instruction_paths('pi')
+                           if instruction_edit(p).original is not None), target)
         owned_instruction = prior.get('instruction')
         if owned_instruction:
             original_path = Path(owned_instruction['path'])
@@ -1348,7 +1416,7 @@ def parser():
     ap.add_argument('--ref', default=DEFAULT_REF, help=f'commit/tag/branch; pinned default: {DEFAULT_REF}')
     ap.add_argument('--skills', default=','.join(DEFAULT_SKILLS), help='public entry skills; dependency library remains private')
     ap.add_argument('--name-prefix', default='superpowers-')
-    ap.add_argument('--only', help='codex,opencode,claude; explicit selection also works before a CLI exists')
+    ap.add_argument('--only', help=','.join(HARNESSES) + '; explicit selection also works before a CLI exists')
     ap.add_argument('--home', help='isolated install home; ignores harness path environment overrides')
     ap.add_argument('--opencode-config', help='explicit effective OpenCode config file')
     ap.add_argument('--opencode-version', choices=['1', '2'], help='override detection; supports v1>=1.18.30 or v2>=2.0.4')
@@ -1379,7 +1447,7 @@ def main(argv=None):
     if args.only:
         names = [x.strip() for x in args.only.split(',')]
         if not names or any(x not in HARNESSES for x in names):
-            raise SetupError('--only accepts codex,opencode,claude; empty/unknown entries are errors.')
+            raise SetupError('--only accepts ' + ','.join(HARNESSES) + '; empty/unknown entries are errors.')
         args.only = ','.join(dict.fromkeys(names))
     layout = Layout(args.home, args.opencode_config)
     if args.recover:

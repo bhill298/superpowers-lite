@@ -20,7 +20,7 @@ class InstructionTests(unittest.TestCase):
 
     def test_install_roundtrip_preserves_bytes_bom_crlf_and_no_final_newline(self):
         originals = {}
-        for h, content in zip(lite.HARNESSES, (b'\xef\xbb\xbf# User\r\nKeep this.\r\n', b'# User\nNo final newline', b'')):
+        for h, content in zip(lite.HARNESSES, (b'\xef\xbb\xbf# User\r\nKeep this.\r\n', b'# User\nNo final newline', b'', b'# Pi\r\n')):
             path = self.layout.instruction_paths(h)[0]
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)

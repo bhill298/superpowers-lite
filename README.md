@@ -1,25 +1,25 @@
-# Superpowers Lite 2.1
+# Superpowers Lite 2.2
 
-One Python installer for manually starting Superpowers workflows in Codex, OpenCode, and Claude Code, with skill chaining authorized inside that workflow. A short global reminder reinforces required handoffs and cleanup after explicit invocation. No startup bootstrap or session hook is installed.
+One Python installer for manually starting Superpowers workflows in Codex, OpenCode, Claude Code, and Pi, with skill chaining authorized inside that workflow. A short global reminder reinforces required handoffs and cleanup after explicit invocation. No startup bootstrap or session hook is installed.
 
 ## Install
 
 Requires Python 3.11 or newer. On Windows use `python`; on Linux substitute `python3` if needed.
 
 ```powershell
-python .\superpowers-lite.py --only codex,opencode,claude --dry-run
-python .\superpowers-lite.py --only codex,opencode,claude
+python .\superpowers-lite.py --only codex,opencode,claude,pi --dry-run
+python .\superpowers-lite.py --only codex,opencode,claude,pi
 ```
 
 Omitting `--only` selects harnesses found on PATH or with an existing configuration directory. Explicit `--only` also works before the harness is installed. OpenCode's major version is detected from its CLI; use `--opencode-version 1` or `2` when detection is unavailable. The adapters target v1 >=1.18.30 and v2 >=2.0.4; the exact native versions tested are listed below. Version overrides are your assertion about the target installation.
 
 Restart affected harness sessions after installation. The default entry points are:
 
-| Workflow | Codex | Claude / OpenCode |
-|---|---|---|
-| Brainstorming | `$superpowers-brainstorming` | `/superpowers-brainstorming` |
-| Writing plans | `$superpowers-writing-plans` | `/superpowers-writing-plans` |
-| Subagent development | `$superpowers-subagent-driven-development` | `/superpowers-subagent-driven-development` |
+| Workflow | Codex | Claude / OpenCode | Pi |
+|---|---|---|---|
+| Brainstorming | `$superpowers-brainstorming` | `/superpowers-brainstorming` | `/skill:superpowers-brainstorming` |
+| Writing plans | `$superpowers-writing-plans` | `/superpowers-writing-plans` | `/skill:superpowers-writing-plans` |
+| Subagent development | `$superpowers-subagent-driven-development` | `/superpowers-subagent-driven-development` | `/skill:superpowers-subagent-driven-development` |
 
 Supply your task after the invocation. After entering a workflow, required dependency skills are read from the private library without asking you to manually invoke each one. The generated entry scopes that authorization to the requested workflow.
 
@@ -41,8 +41,9 @@ The old shared `.agents/skills` installation plus Claude links exposed the same 
 | OpenCode v1 | `~/.config/opencode/skills/<name>/SKILL.md` | Exact `permission.skill.<name>: deny` rules hide model skill access; the native slash command expands the entry directly |
 | OpenCode v2 | Same native OpenCode directory | `metadata.opencode/autoinvoke: false` |
 | Claude Code | `~/.claude/commands/<name>.md` | `disable-model-invocation: true` on command-format skills |
+| Pi | `$PI_CODING_AGENT_DIR/skills/<name>/SKILL.md`, default `~/.pi/agent/skills` | `disable-model-invocation: true` hides entries from automatic skill advertising; `/skill:<name>` expands them explicitly |
 
-Claude supports command files as skills. OpenCode does not discover that directory as a skill source, so installing all three harnesses creates no duplicate `.agents`/`.claude` skill trees. Lite does not disable discovery of unrelated Claude skills. Known same-name collisions in standard roots are rejected instead of silently overwritten.
+Claude supports command files as skills. OpenCode does not discover that directory as a skill source, so installing all four harnesses creates no duplicate `.agents`/`.claude` skill trees. Lite does not disable discovery of unrelated Claude skills. Known same-name collisions in standard roots are rejected instead of silently overwritten.
 
 Sources: [Codex skill policy](https://learn.chatgpt.com/docs/build-skills), [Claude command/skill compatibility](https://code.claude.com/docs/en/skills), [OpenCode v1 permissions](https://opencode.ai/docs/permissions/), [OpenCode v2 skill discovery and controls](https://opencode.ai/v2/docs/skills). Native checks confirmed Codex's private `$CODEX_HOME/skills` discovery and the v1 slash-command behavior.
 
@@ -57,6 +58,7 @@ By default, Lite installs a short instruction block that applies only after you 
 | Codex | `$CODEX_HOME/AGENTS.md`, or the existing nonempty `AGENTS.override.md` when that takes precedence |
 | OpenCode | `$OPENCODE_CONFIG_DIR/AGENTS.md`, normally `~/.config/opencode/AGENTS.md` |
 | Claude Code | `$CLAUDE_CONFIG_DIR/CLAUDE.md`, normally `~/.claude/CLAUDE.md` |
+| Pi | First existing file in `$PI_CODING_AGENT_DIR`: `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`; creates `AGENTS.md` if none exists |
 
 The block is enclosed by `<!-- superpowers-lite:workflow-<harness>:begin -->` and the matching `:end -->` marker. Ownership is recorded in the manifest. Updates replace only an unchanged owned block; uninstall removes it and removes an installer-created file only if nothing else remains. Existing user text, UTF-8 BOMs, and line endings outside the block are preserved. Edited, missing, malformed, duplicate, or unowned blocks stop replacement rather than silently overwriting instructions. Symlinks are retained and their resolved targets tracked; retargeting a managed file requires reconciliation. Project instruction files are not edited.
 
@@ -91,13 +93,13 @@ python superpowers-lite.py --update-default-ref --dry-run
 python superpowers-lite.py --update-default-ref
 ```
 
-This mode accepts only the optional `--dry-run` flag. It downloads both revisions, checks compatibility, and exercises fresh install, update, repeated update, and uninstall in temporary homes for all three harnesses and both OpenCode adapters. It does not run upstream helpers or native harnesses. On success it atomically replaces only the `DEFAULT_REF` value, preserving the script's other bytes and permission bits. Existing installations are unchanged; run a normal installation afterward to update them.
+This mode accepts only the optional `--dry-run` flag. It downloads both revisions, checks compatibility, and exercises fresh install, update, repeated update, and uninstall in temporary homes for all four harnesses and both OpenCode adapters. It does not run upstream helpers or native harnesses. On success it atomically replaces only the `DEFAULT_REF` value, preserving the script's other bytes and permission bits. Existing installations are unchanged; run a normal installation afterward to update them.
 
 The compatibility check allows workflow prose changes, static diagrams, and new prose-only Markdown resources. It rejects removed bundled files, unsupported skill metadata, changed or added helper/non-prose assets, changed executable/example code blocks, changed template substitutions, and new unresolved local or `superpowers:` skill references. Existing unresolved references do not by themselves block an update. Failures exit nonzero, report the affected files or validation error, and leave the pin unchanged. A rejection means the change needs manual compatibility review; it is not necessarily proof of an upstream defect. There is no override flag.
 
 This is an installer-compatibility check, not a semantic audit of workflow prose or a guarantee of model behavior. Changed helper implementations require review even if their interfaces happen to remain compatible. Concurrent ref updaters are excluded by a sibling `.superpowers-lite-ref.lock`; after an interrupted updater, ensure it is no longer running before removing that stale lock and retrying.
 
-Normal installation honors `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG`, `XDG_CONFIG_HOME`, and `XDG_DATA_HOME`. If both OpenCode JSON and JSONC files exist, select the effective target with `--opencode-config`. Other config layers may still override it. Use the same environment/path settings for later updates and uninstall.
+Normal installation honors `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG`, `XDG_CONFIG_HOME`, and `XDG_DATA_HOME`. If both OpenCode JSON and JSONC files exist, select the effective target with `--opencode-config`. Other config layers may still override it. Use the same environment/path settings for later updates and uninstall.
 
 `--home <directory>` creates an isolated installation and ignores inherited harness path overrides. It is useful for testing or preparing a separate home; it does not reconfigure running CLIs to use that home. Explicit `--opencode-config` still applies.
 
@@ -113,12 +115,22 @@ python superpowers-lite.py --only codex --codex-subagent-model <supported-model>
 
 Effort works independently of model. These preferences persist across Lite updates and restore previous values on uninstall when still unchanged. To relinquish owned tuning, uninstall Codex's Lite entries and reinstall without those flags. Model availability and spawn argument schemas remain harness-specific.
 
+## Pi and optional subagents
+
+Install only the Pi adapter with `python superpowers-lite.py --only pi`, then restart Pi or run `/reload`. Invoke entries with `/skill:superpowers-brainstorming <task>` and the other names in the table above. Support is verified against Pi 0.79.9. Pi's `enableSkillCommands: false` hides interactive command discovery but still permits a manually typed `/skill:<name>`. Lite leaves this preference and other Pi settings unchanged. After adding Pi, use installer 2.2 or newer for updates/uninstall; earlier versions do not recognize Pi ownership records.
+
+Pi has no built-in subagent tool. An installed extension can supply one, such as Pi's [reference subagent extension](https://github.com/earendil-works/pi/tree/main/packages/coding-agent/examples/extensions/subagent). Lite supplies tool guidance, but does not install an extension, agent roles, model settings, or a separate orchestration engine. The agent must use the actual extension's schema and available roles; different extensions are not interchangeable. Required independent reviews need a suitable reviewer role, and implementation needs a worker with the necessary tools. If a required capability is missing, the guidance tells the agent to report the blocker rather than invent a tool or substitute self-review. This also applies to skills that delegate only part of their workflow, such as plan review.
+
+For extensions without resume support, the guidance permits a fresh isolated worker with the previous report and remaining findings. That loses the original worker's private context. Explicit model constraints must be preserved; an unsupported override is not permission to switch models. These instructions need model compliance and do not guarantee that every third-party extension can execute every upstream workflow.
+
+Pi also discovers shared `.agents/skills`, project `.pi/skills`, and configured/package skill sources. Lite checks standard roots, including nested skills with ordinary declared names, and known Superpowers extension/package/bootstrap locations. It conservatively ignores skill ignore-filters when checking collisions. Arbitrary custom skill sources, complex YAML name encodings, dynamically registered resources, and extension behavior are outside this audit. Review Pi's startup diagnostics if you add extra sources. Pi's [skill documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) describes manual invocation and discovery.
+
 ## Migrate the original installer
 
 ```text
 python superpowers-lite.py --audit
-python superpowers-lite.py --only codex,opencode,claude --migrate-legacy --dry-run
-python superpowers-lite.py --only codex,opencode,claude --migrate-legacy
+python superpowers-lite.py --only codex,opencode,claude,pi --migrate-legacy --dry-run
+python superpowers-lite.py --only codex,opencode,claude,pi --migrate-legacy
 ```
 
 Include every affected harness because the original layout was shared. Migration recognizes legacy ownership markers, removes verified shared entries and Claude links/copies, replaces old `ask` rules for those entries, and removes Lite's old marked prompt/shell blocks. The new scoped workflow reminder is installed independently unless disabled. Previous files remain in transaction backups. It refuses unrelated or unrecognized entries.
@@ -181,3 +193,13 @@ Version 2.1 reminder checks: 90 portable tests passed on WSL Linux; Windows pass
 Run the portable regression suite with `python -m unittest discover -s tests -v`. It generates its own temporary source fixtures and requires no downloads or installed harnesses. Native file-symlink tests skip on Windows when the process lacks symlink privileges; run the suite on Linux/WSL to exercise them.
 
 Optional integration scripts are `tests/native_harness_checks.py`, `tests/upstream_linux_check.py`, and `tests/v2_native_check.py`. The native harness checks use `.superpowers-review/upstream` by default, or accept `--source <checkout>`; the v2 check additionally requires a Linux OpenCode executable at `.superpowers-review/opencode-v2-bin/opencode`. These fixtures and generated reports are intentionally untracked. The Linux helper check downloads the pinned upstream archive and requires Bash and Git. Historical review reports and binary integrity records are not included in this checkout.
+
+Pi has a separate offline native SDK check:
+
+```text
+python tests/native_pi_checks.py --source <upstream-checkout> --pi-package <installed-pi-coding-agent-package-directory>
+```
+
+It requires Node and the installed Pi npm package, uses temporary homes and an in-memory model transport, and needs no credentials or model usage. On Pi 0.79.9 it verified three manual entries, absence from automatic skill advertising, explicit command expansion (even with command discovery disabled), global instruction/fallback preservation, and uninstall. It also checked that an extension-registered delegation tool can coexist with the entries, using a synthetic extension without starting child agents. This is a harness integration test, not a live-model workflow test or certification of a particular subagent extension.
+
+The 2.2 portable suite passed all 101 tests on WSL Ubuntu and passed on Windows with five symlink-privilege skips. This includes Pi install/update/uninstall, custom configuration paths, instruction-file precedence, modified-file protection, discovery collisions, and the shared transaction/recovery checks.
