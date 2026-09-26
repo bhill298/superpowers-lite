@@ -7,8 +7,8 @@ One Python installer for manually starting Superpowers workflows in Codex, OpenC
 Requires Python 3.11 or newer. On Windows use `python`; on Linux substitute `python3` if needed.
 
 ```powershell
-python .\superpowers_lite.py --only codex,opencode,claude --dry-run
-python .\superpowers_lite.py --only codex,opencode,claude
+python .\superpowers-lite.py --only codex,opencode,claude --dry-run
+python .\superpowers-lite.py --only codex,opencode,claude
 ```
 
 Omitting `--only` selects harnesses found on PATH or with an existing configuration directory. Explicit `--only` also works before the harness is installed. OpenCode's major version is detected from its CLI; use `--opencode-version 1` or `2` when detection is unavailable. The adapters target v1 >=1.18.30 and v2 >=2.0.4; the exact native versions tested are listed below. Version overrides are your assertion about the target installation.
@@ -26,7 +26,7 @@ Supply your task after the invocation. After entering a workflow, required depen
 To choose different public entry points:
 
 ```text
-python superpowers_lite.py --only codex --skills brainstorming,executing-plans,systematic-debugging
+python superpowers-lite.py --only codex --skills brainstorming,executing-plans,systematic-debugging
 ```
 
 This replaces only Codex's entry selection. Other harness installations retain their selections and libraries. A later update uses the default three entries unless you pass `--skills` again. An empty selection is an error; use `--uninstall` to remove entries. `--name-prefix` defaults to `superpowers-`; final names must be lowercase kebab case, 1–64 characters.
@@ -50,11 +50,11 @@ The full supporting skill library lives outside discovery roots, under `~/.local
 
 ## Source and configuration decisions
 
-The default source is audited Superpowers commit `5bf4e78011075bcfc0dc295f0724994cd123ee71` (upstream plugin version 6.4.1). Updates are explicit:
+The default source is the reviewed Superpowers commit `5bf4e78011075bcfc0dc295f0724994cd123ee71` (upstream plugin version 6.4.1). Updates are explicit:
 
 ```text
-python superpowers_lite.py --ref <commit-or-tag> --dry-run
-python superpowers_lite.py --source /path/to/local/superpowers --dry-run
+python superpowers-lite.py --ref <commit-or-tag> --dry-run
+python superpowers-lite.py --source /path/to/local/superpowers --dry-run
 ```
 
 Remote tags/branches resolve to an exact commit before downloading. The manifest records that commit, archive SHA-256, library content hash, and installer version. A local checkout records its path, Git HEAD when available, and actual installed content hash; local edits are included. An upstream behavioral frontmatter extension, such as hooks or special agent context, is rejected for review rather than silently discarded. Descriptive upstream headers stay in the private library as data; harness policy files are generated independently.
@@ -68,9 +68,9 @@ The installer parses JSONC and TOML, preserves their values, and validates seria
 Codex multi-agent and model preferences are **opt-in global settings**, not settings scoped to Superpowers:
 
 ```text
-python superpowers_lite.py --only codex --enable-codex-multi-agent
-python superpowers_lite.py --only codex --codex-subagent-effort high
-python superpowers_lite.py --only codex --codex-subagent-model <supported-model>
+python superpowers-lite.py --only codex --enable-codex-multi-agent
+python superpowers-lite.py --only codex --codex-subagent-effort high
+python superpowers-lite.py --only codex --codex-subagent-model <supported-model>
 ```
 
 Effort works independently of model. These preferences persist across Lite updates and restore previous values on uninstall when still unchanged. To relinquish owned tuning, uninstall Codex's Lite entries and reinstall without those flags. Model availability and spawn argument schemas remain harness-specific.
@@ -78,9 +78,9 @@ Effort works independently of model. These preferences persist across Lite updat
 ## Migrate the original installer
 
 ```text
-python superpowers_lite.py --audit
-python superpowers_lite.py --only codex,opencode,claude --migrate-legacy --dry-run
-python superpowers_lite.py --only codex,opencode,claude --migrate-legacy
+python superpowers-lite.py --audit
+python superpowers-lite.py --only codex,opencode,claude --migrate-legacy --dry-run
+python superpowers-lite.py --only codex,opencode,claude --migrate-legacy
 ```
 
 Include every affected harness because the original layout was shared. Migration recognizes legacy ownership markers, removes verified shared entries and Claude links/copies, replaces old `ask` rules for those entries, and removes Lite's marked prompt/shell blocks. Previous files remain in transaction backups. It refuses unrelated or unrecognized entries.
@@ -99,16 +99,16 @@ Restart terminal/IDE parent processes afterward. Lite removes its marked Linux s
 ## Uninstall and recovery
 
 ```text
-python superpowers_lite.py --uninstall --only codex
-python superpowers_lite.py --uninstall --prune
+python superpowers-lite.py --uninstall --only codex
+python superpowers-lite.py --uninstall --prune
 ```
 
 Uninstall removes only manifest-owned entries and releases owned config settings. Modified entries stop replacement/removal so your edits are not lost. `--prune` additionally removes hash-verified libraries no remaining installation references. Close old sessions first: their conversation may still reference an older library. Without `--prune`, libraries remain available for those sessions. Manifests and transaction backups remain for inspection.
 
-Every install builds and validates its complete plan before applying changes. Files are staged beside destinations, replacements use same-volume renames, and ordinary failures trigger rollback. A lock prevents overlapping installers. If the process is interrupted, first ensure no installer remains active, then run:
+Every install builds and validates its complete plan before applying changes. Files are staged beside destinations, replacements use same-volume renames, and ordinary failures trigger rollback. A lock covers ownership reads, planning, and application to prevent overlapping installers. Dry runs acquire a temporary lock, then remove it without changing installed files; newly created empty store directories are also removed. If the process is interrupted, first ensure no installer remains active, then run:
 
 ```text
-python superpowers_lite.py --recover
+python superpowers-lite.py --recover
 ```
 
 Recovery rolls back an incomplete transaction, or completes backup archival for a committed one. A concurrent user edit blocks destructive recovery and reports the backup location. The transaction journal maps original paths to archived backups under `~/.local/share/superpowers-lite/transactions/<id>/backups/<index>`. These backups can contain private configuration; retain them accordingly. Successful historical transactions are not automatically reverted wholesale, because that could discard later user edits. There is no claim of filesystem-wide atomicity or power-loss durability.
@@ -123,7 +123,7 @@ Recovery rolls back an incomplete transaction, or completes backup archival for 
 
 ## Verification performed
 
-All installer tests use temporary homes; no real user harness configuration was changed.
+All installer tests use temporary homes. The table below records historical checks for the original 2.0 implementation; it is not a claim that every integration check has been rerun for each subsequent change.
 
 | Check | Result |
 |---|---|
@@ -136,4 +136,6 @@ All installer tests use temporary homes; no real user harness configuration was 
 
 The v2 API can return a catalog before plugin activation finishes; its smoke test uses a persistent local server and waits for discovery. Codex's `debug prompt-input` does not itself expand `$skill`; actual `exec` against the mock endpoint verifies that path. These are native registration/prompt integration checks, not a paid model run through an entire Superpowers project.
 
-Run the portable suite with `python -m unittest discover -s tests -v`. Optional integration scripts are `tests/native_harness_checks.py`, `tests/upstream_linux_check.py`, and `tests/v2_native_check.py`. They use the pinned checkout/native binary fixtures under `.superpowers-review`; v2's official npm binary package integrity is recorded there. The WSL helper test downloads the pinned upstream archive. Original review evidence is retained in `superpowers_lite_review.md` and `.superpowers-review/superpowers_lite.original.py`.
+Run the portable regression suite with `python -m unittest discover -s tests -v`. It generates its own temporary source fixtures and requires no downloads or installed harnesses. Native file-symlink tests skip on Windows when the process lacks symlink privileges; run the suite on Linux/WSL to exercise them.
+
+Optional integration scripts are `tests/native_harness_checks.py`, `tests/upstream_linux_check.py`, and `tests/v2_native_check.py`. The native harness checks require a local upstream checkout at `.superpowers-review/upstream`; the v2 check additionally requires a Linux OpenCode executable at `.superpowers-review/opencode-v2-bin/opencode`. These fixtures and generated reports are intentionally untracked. The Linux helper check downloads the pinned upstream archive and requires Bash and Git. Historical review reports and binary integrity records are not included in this checkout.

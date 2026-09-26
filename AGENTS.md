@@ -8,7 +8,7 @@ This repository contains a Python 3.11+ installer for manually invoked Superpowe
 - `README.md`: installation, migration, configuration, and verification documentation.
 - `LICENSE`: project licensing.
 
-There are no separate source, asset, or test directories in this checkout. Supporting workflow assets come from upstream. Use the actual hyphenated script filename; README examples currently use `superpowers_lite.py`.
+`tests/` contains the portable regression suite and optional native integration scripts. Supporting workflow assets come from upstream. Use the hyphenated script filename, `superpowers-lite.py`. Generated caches and local integration fixtures are ignored by Git.
 
 ## Build, Test, and Development Commands
 
@@ -27,7 +27,7 @@ Generated entry names must be lowercase kebab-case, 1–64 characters, with the 
 
 ## Testing Guidelines
 
-The README documents `python -m unittest discover -s tests -v`, but the referenced suite and integration fixtures are absent. No coverage threshold is configured. When adding tests, use standard-library `unittest` and `tests/test_*.py` names.
+Run `python -m unittest discover -s tests -v` for the portable suite. Optional native integration fixtures are not checked in; see README.md for their requirements. No coverage threshold is configured. Use standard-library `unittest` and `tests/test_*.py` names. Load the standalone script through `tests/lite_test_support.py`.
 
 Exercise install/update/uninstall, modified-file protection, configuration round trips, rollback, and recovery using temporary homes. Verify Windows and Linux path behavior when changing filesystem operations. Report checks actually run and any unavailable fixtures.
 

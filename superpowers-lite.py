@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Superpowers Lite: manual workflow entry, with authorized skill chaining.
 
-Python 3.11+, standard library. See superpowers_lite_README.md.
+Python 3.11+, standard library. See README.md.
 No bootstrap plugin, global prompt injection, or global skill-discovery toggle.
 """
 from __future__ import annotations
