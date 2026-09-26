@@ -1,6 +1,6 @@
-# Superpowers Lite 2
+# Superpowers Lite 2.1
 
-One Python installer for manually starting Superpowers workflows in Codex, OpenCode, and Claude Code, with skill chaining authorized inside that workflow. No startup bootstrap, session hook, or global workflow instructions are installed.
+One Python installer for manually starting Superpowers workflows in Codex, OpenCode, and Claude Code, with skill chaining authorized inside that workflow. A short global reminder reinforces required handoffs and cleanup after explicit invocation. No startup bootstrap or session hook is installed.
 
 ## Install
 
@@ -47,6 +47,31 @@ Claude supports command files as skills. OpenCode does not discover that directo
 Sources: [Codex skill policy](https://learn.chatgpt.com/docs/build-skills), [Claude command/skill compatibility](https://code.claude.com/docs/en/skills), [OpenCode v1 permissions](https://opencode.ai/docs/permissions/), [OpenCode v2 skill discovery and controls](https://opencode.ai/v2/docs/skills). Native checks confirmed Codex's private `$CODEX_HOME/skills` discovery and the v1 slash-command behavior.
 
 The full supporting skill library lives outside discovery roots, under `~/.local/share/superpowers-lite/bundles/<content-hash>`. Original upstream directory names, scripts, templates, and relative paths are preserved. Only selected entry points are public. This avoids unreliable dependency inference from prose mentions and avoids breaking shell scripts by renaming their sibling directories. The bootstrap skills `using-superpowers` and `diagnosing-superpowers` are omitted; required `using-superpowers/references` files remain at their original paths.
+
+## Scoped workflow reminders
+
+By default, Lite installs a short instruction block that applies only after you explicitly start a Lite workflow. It asks the agent to read complete skill instructions, track required stages and handoffs, load required finishing skills, and check verification/cleanup before claiming completion. It preserves user stopping points and approval gates. A matching task alone does not authorize starting a workflow, and subagents are told to complete their assigned task rather than restart the whole process.
+
+| Harness | Global instruction file |
+|---|---|
+| Codex | `$CODEX_HOME/AGENTS.md`, or the existing nonempty `AGENTS.override.md` when that takes precedence |
+| OpenCode | `$OPENCODE_CONFIG_DIR/AGENTS.md`, normally `~/.config/opencode/AGENTS.md` |
+| Claude Code | `$CLAUDE_CONFIG_DIR/CLAUDE.md`, normally `~/.claude/CLAUDE.md` |
+
+The block is enclosed by `<!-- superpowers-lite:workflow-<harness>:begin -->` and the matching `:end -->` marker. Ownership is recorded in the manifest. Updates replace only an unchanged owned block; uninstall removes it and removes an installer-created file only if nothing else remains. Existing user text, UTF-8 BOMs, and line endings outside the block are preserved. Edited, missing, malformed, duplicate, or unowned blocks stop replacement rather than silently overwriting instructions. Symlinks are retained and their resolved targets tracked; retargeting a managed file requires reconciliation. Project instruction files are not edited.
+
+Creating OpenCode v1's global `AGENTS.md` would hide an existing global Claude instruction fallback. When that fallback was active, Lite preserves it as a reversible `instructions` entry in the OpenCode config. OpenCode v2 does not use that fallback. If Codex's override selection changes, rerun the installer to move its owned block to the effective file.
+
+To remove or disable the reminder while retaining manual skills:
+
+```text
+python superpowers-lite.py --only codex --no-workflow-guidance
+python superpowers-lite.py --only codex --workflow-guidance
+```
+
+The preference persists per harness. Include your desired `--skills` selection when updating, as with other installer options. These are model instructions, not an enforced workflow engine: they add a small amount of context to each session, and model compliance still needs testing. Restart sessions after changing them. The 2.1 installer upgrades ownership manifests from schema 2 to 3; use 2.1 or newer for subsequent updates/uninstall.
+
+Instruction loading follows [Codex's global-file precedence](https://learn.chatgpt.com/docs/agent-configuration/agents-md), [OpenCode v1 rules](https://opencode.ai/docs/rules/), [OpenCode v2 instructions](https://opencode.ai/v2/docs/instructions), and [Claude's user instructions](https://code.claude.com/docs/en/memory).
 
 ## Source and configuration decisions
 
@@ -96,7 +121,7 @@ python superpowers-lite.py --only codex,opencode,claude --migrate-legacy --dry-r
 python superpowers-lite.py --only codex,opencode,claude --migrate-legacy
 ```
 
-Include every affected harness because the original layout was shared. Migration recognizes legacy ownership markers, removes verified shared entries and Claude links/copies, replaces old `ask` rules for those entries, and removes Lite's marked prompt/shell blocks. Previous files remain in transaction backups. It refuses unrelated or unrecognized entries.
+Include every affected harness because the original layout was shared. Migration recognizes legacy ownership markers, removes verified shared entries and Claude links/copies, replaces old `ask` rules for those entries, and removes Lite's old marked prompt/shell blocks. The new scoped workflow reminder is installed independently unless disabled. Previous files remain in transaction backups. It refuses unrelated or unrecognized entries.
 
 Known full Superpowers plugins, hooks, discoverable full-library aliases, and unmarked bootstrap instructions block installation. Disable/remove those through their original harness or installation mechanism first; Lite does not silently uninstall another plugin. Audit checks known global/custom config locations and project ancestors of the current directory. It cannot certify all repositories, organization-managed policy, arbitrary launcher instructions, or custom plugin behavior.
 
@@ -149,8 +174,10 @@ All installer tests use temporary homes. The table below records historical chec
 
 The v2 API can return a catalog before plugin activation finishes; its smoke test uses a persistent local server and waits for discovery. Codex's `debug prompt-input` does not itself expand `$skill`; actual `exec` against the mock endpoint verifies that path. These are native registration/prompt integration checks, not a paid model run through an entire Superpowers project.
 
-Real GPT-5.6-Luna checks are documented in [tests/LUNA_EVALUATION.md](tests/LUNA_EVALUATION.md). All 13 Codex entries delivered their complete private skill bodies; 12 of 13 first-milestone trials passed. One reviewer-dispatch trial failed on model override selection and passed a separate diagnostic with explicit model inheritance. A complete TDD task passed. A longer SDD task produced verified code and completed reviews but skipped its final skill handoff and workspace cleanup. The opt-in `tests/live_skill_checks.py` runner uses disposable projects and temporary homes, consumes authenticated model usage, and records tool traces for manual grading. These results do not establish OpenCode or Claude live-model reliability.
+Baseline real GPT-5.6-Luna checks are documented in [tests/LUNA_EVALUATION.md](tests/LUNA_EVALUATION.md). All 13 Codex entries delivered their complete private skill bodies; 12 of 13 first-milestone trials passed. One reviewer-dispatch trial failed on model override selection and passed a separate diagnostic with explicit model inheritance. A complete TDD task passed. A longer SDD task produced verified code and completed reviews but skipped its final skill handoff and workspace cleanup. The opt-in `tests/live_skill_checks.py` runner uses disposable projects and temporary homes, consumes authenticated model usage, and records tool traces for manual grading. These results do not establish OpenCode or Claude live-model reliability.
+
+Version 2.1 reminder checks: 90 portable tests passed on WSL Linux; Windows passed with four file-symlink privilege skips. Native mock-provider checks confirmed global reminder loading in Codex, OpenCode v1, and Claude, including Codex override precedence and preservation of OpenCode's existing Claude fallback. OpenCode v2 reminder loading has not been rerun natively; its local binary fixture was unavailable.
 
 Run the portable regression suite with `python -m unittest discover -s tests -v`. It generates its own temporary source fixtures and requires no downloads or installed harnesses. Native file-symlink tests skip on Windows when the process lacks symlink privileges; run the suite on Linux/WSL to exercise them.
 
-Optional integration scripts are `tests/native_harness_checks.py`, `tests/upstream_linux_check.py`, and `tests/v2_native_check.py`. The native harness checks require a local upstream checkout at `.superpowers-review/upstream`; the v2 check additionally requires a Linux OpenCode executable at `.superpowers-review/opencode-v2-bin/opencode`. These fixtures and generated reports are intentionally untracked. The Linux helper check downloads the pinned upstream archive and requires Bash and Git. Historical review reports and binary integrity records are not included in this checkout.
+Optional integration scripts are `tests/native_harness_checks.py`, `tests/upstream_linux_check.py`, and `tests/v2_native_check.py`. The native harness checks use `.superpowers-review/upstream` by default, or accept `--source <checkout>`; the v2 check additionally requires a Linux OpenCode executable at `.superpowers-review/opencode-v2-bin/opencode`. These fixtures and generated reports are intentionally untracked. The Linux helper check downloads the pinned upstream archive and requires Bash and Git. Historical review reports and binary integrity records are not included in this checkout.

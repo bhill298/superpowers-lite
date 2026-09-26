@@ -142,7 +142,8 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(opencode, self.snapshot(self.layout.opencode))
         self.assertEqual(note, (self.layout.claude / 'CLAUDE.md').read_bytes())
         for name, data in claude.items():
-            self.assertEqual(data, (self.layout.claude / name).read_bytes())
+            if name != 'CLAUDE.md':  # The deliberately edited file was checked above.
+                self.assertEqual(data, (self.layout.claude / name).read_bytes())
 
     def test_empty_selection_rejected_without_changes(self):
         self.run_cli()

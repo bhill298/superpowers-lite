@@ -3,6 +3,7 @@
 Uses fresh homes, a local mock model endpoint, and the audited upstream source.
 No live credentials or external inference endpoints are used.
 """
+import argparse
 import contextlib
 import http.server
 import io
@@ -27,14 +28,22 @@ REPORT = BASE / '.superpowers-review' / 'v2-native-results.json'
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', type=Path, default=BASE / '.superpowers-review' / 'upstream')
+    args = parser.parse_args()
     reports = {}
     with tempfile.TemporaryDirectory(prefix='lite-native-') as temporary:
         root = Path(temporary)
         home, project = root / 'home', root / 'project'
         project.mkdir()
         subprocess.run(['git', 'init', '-q', str(project)], check=True)
+        (home / '.claude').mkdir(parents=True)
+        (home / '.claude' / 'CLAUDE.md').write_text('FIXTURE_EXISTING_CLAUDE_RULE\n', encoding='utf-8')
+        (home / '.codex').mkdir()
+        (home / '.codex' / 'AGENTS.md').write_text('FIXTURE_SHADOWED_CODEX_RULE\n', encoding='utf-8')
+        (home / '.codex' / 'AGENTS.override.md').write_text('FIXTURE_CODEX_OVERRIDE_RULE\n', encoding='utf-8')
         with contextlib.redirect_stdout(io.StringIO()):
-            lite.main(['--home', str(home), '--source', str(BASE / '.superpowers-review' / 'upstream'),
+            lite.main(['--home', str(home), '--source', str(args.source.resolve()),
                        '--only', 'codex,opencode,claude', '--opencode-version', '1'])
         layout = lite.Layout(str(home))
         env = os.environ.copy()
@@ -84,10 +93,13 @@ def main():
                 (BASE / '.superpowers-review' / ('v2-codex-' + name + '.json')).write_text(output, encoding='utf-8')
                 # The user message itself names the skill in the explicit case;
                 # test the wrapper marker to establish actual content loading.
-                included = '<!-- superpowers-lite:2.0.0:codex:' in output
+                included = f'<!-- superpowers-lite:{lite.VERSION}:codex:' in output
                 reports['codex_debug_' + name + '_entry_loaded'] = included
                 if name == 'ordinary':
                     assert not included, 'Manual skill leaked into ordinary prompt'
+                    assert 'Superpowers Lite: explicitly started workflows' in output, 'Global workflow reminder was not loaded'
+                    assert 'FIXTURE_CODEX_OVERRIDE_RULE' in output and 'FIXTURE_SHADOWED_CODEX_RULE' not in output
+                    reports['codex_global_guidance'] = True
                 else:
                     if not included:
                         print('Codex debug prompt-input did not expand the skill; inspecting skills/list separately.')
@@ -174,7 +186,9 @@ def main():
                 output = run([opencode, '--pure', 'run', '--command', 'superpowers-brainstorming', 'design a widget'], timeout=60)
                 assert captured, 'No request reached the local mock provider'
                 raw = json.dumps(captured[-1]['body'])
-                assert '<!-- superpowers-lite:2.0.0:opencode:' in raw, 'Explicit slash command did not expand the wrapper'
+                assert f'<!-- superpowers-lite:{lite.VERSION}:opencode:' in raw, 'Explicit slash command did not expand the wrapper'
+                assert 'Superpowers Lite: explicitly started workflows' in raw, 'OpenCode global reminder was not loaded'
+                assert 'FIXTURE_EXISTING_CLAUDE_RULE' in raw, 'Existing V1 Claude instruction fallback was lost'
                 # Body appears in the explicit user prompt, but should not be
                 # advertised as an available skill in system/tool instructions.
                 body = captured[-1]['body']
@@ -182,7 +196,7 @@ def main():
                 system = json.dumps([x for x in inputs if isinstance(x, dict) and x.get('role') in ('system', 'developer')])
                 tools = json.dumps(body.get('tools', []))
                 assert 'superpowers-brainstorming' not in system + tools, 'Manual-only skill was advertised to the model'
-                reports['opencode_explicit_command'] = {'expanded_despite_skill_deny': True, 'not_advertised_to_model': True, 'provider': 'localhost mock only'}
+                reports['opencode_explicit_command'] = {'expanded_despite_skill_deny': True, 'not_advertised_to_model': True, 'global_guidance_loaded': True, 'existing_claude_rules_preserved': True, 'provider': 'localhost mock only'}
                 if codex:
                     captured.clear()
                     endpoint = f'http://127.0.0.1:{mock.server_port}/v1'
@@ -193,7 +207,7 @@ def main():
                                   '$superpowers-brainstorming design a widget'], timeout=60)
                     assert captured, 'Codex did not reach the local mock'
                     raw = json.dumps(captured[-1]['body'])
-                    assert '<!-- superpowers-lite:2.0.0:codex:' in raw, 'Codex explicit entry was not injected'
+                    assert f'<!-- superpowers-lite:{lite.VERSION}:codex:' in raw, 'Codex explicit entry was not injected'
                     reports['codex_explicit_invocation'] = {'entry_injected': True, 'provider': 'localhost mock only'}
                 claude = Path(os.environ.get('APPDATA', '')) / 'npm' / 'node_modules' / '@anthropic-ai' / 'claude-code' / 'bin' / 'claude.exe'
                 if os.name == 'nt' and claude.is_file():
@@ -210,11 +224,12 @@ def main():
                         bodies = [x['body'] for x in captured if '/messages' in x['path'] and 'count_tokens' not in x['path']]
                         assert bodies, 'Claude did not reach the local mock: ' + output[-2000:] + ' paths=' + str([x['path'] for x in captured])
                         raw = json.dumps(bodies[-1])
-                        included = '<!-- superpowers-lite:2.0.0:claude:' in raw
+                        included = f'<!-- superpowers-lite:{lite.VERSION}:claude:' in raw
                         assert included == (kind == 'explicit'), (kind, included)
                         if kind == 'ordinary':
                             assert 'superpowers-brainstorming' not in raw, 'Claude advertised a manual-only command'
-                        reports['claude_' + kind] = {'entry_injected': included, 'provider': 'localhost mock only'}
+                        assert 'Superpowers Lite: explicitly started workflows' in raw, 'Claude global reminder was not loaded'
+                        reports['claude_' + kind] = {'entry_injected': included, 'global_guidance_loaded': True, 'provider': 'localhost mock only'}
             finally:
                 mock.shutdown()
                 mock.server_close()

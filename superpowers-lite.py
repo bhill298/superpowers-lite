@@ -2,7 +2,7 @@
 """Superpowers Lite: manual workflow entry, with authorized skill chaining.
 
 Python 3.11+, standard library. See README.md.
-No bootstrap plugin, global prompt injection, or global skill-discovery toggle.
+Scoped global workflow reminders; no bootstrap plugin or discovery toggle.
 """
 from __future__ import annotations
 import argparse
@@ -30,8 +30,8 @@ if sys.version_info < (3, 11):
     raise SystemExit('Python 3.11 or newer is required for validated TOML configuration.')
 import tomllib
 
-VERSION = '2.0.0'
-SCHEMA = 2
+VERSION = '2.1.0'
+SCHEMA = 3
 REPO = 'obra/superpowers'
 DEFAULT_REF = '5bf4e78011075bcfc0dc295f0724994cd123ee71'
 DEFAULT_SKILLS = ['brainstorming', 'writing-plans', 'subagent-driven-development']
@@ -42,6 +42,16 @@ HARNESSES = ('codex', 'opencode', 'claude')
 NAME_RE = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*\Z')
 OLD_BLOCK_RE = re.compile(r'\n?<!-- superpowers-lite:\w+:begin -->.*?<!-- superpowers-lite:\w+:end -->\n?', re.S)
 UNSPECIFIED = object()
+WORKFLOW_GUIDANCE = '''## Superpowers Lite: explicitly started workflows
+
+Apply this section only after the user explicitly starts a Superpowers Lite workflow, and only within that task. Otherwise do not load or start Superpowers skills. A matching task alone is not authorization.
+
+Read the active entry's full private skill and platform notes. Read truncated instructions in smaller chunks. Keep a short checklist of the workflow's required stages, skill handoffs, verification, cleanup, and user decision gates.
+
+When the workflow requires another Superpowers skill, read its full SKILL.md using the active entry's private-library mapping and follow it before proceeding. Do not substitute memory, a summary, or an improvised equivalent. A required finishing skill is part of the workflow, even after implementation and reviews pass.
+
+Before reporting completion, check that every required handoff and cleanup step is actually done. Continue outstanding authorized steps; if blocked, identify the missing step and reason rather than claiming completion. Respect explicit user stopping points and required approval gates; do not merge, push, delete branches, or start unrelated work without authorization. Subagents perform their assigned task only and report outstanding obligations to the parent; they do not restart the whole workflow.
+'''
 
 
 class SetupError(Exception):
@@ -231,6 +241,11 @@ class Layout:
         if len(paths) > 1:
             raise SetupError('Both OpenCode config files exist; select the effective file with --opencode-config.')
         return paths[0] if paths else self.opencode / 'opencode.json'
+
+    def instruction_paths(self, harness):
+        if harness == 'codex':
+            return [self.codex / 'AGENTS.md', self.codex / 'AGENTS.override.md']
+        return [self.claude / 'CLAUDE.md' if harness == 'claude' else self.opencode / 'AGENTS.md']
 
 
 def detected(layout):
@@ -499,6 +514,70 @@ class ConfigEdit:
         return dump_toml(self.data) if self.format == 'toml' else json_bytes(self.data)
 
 
+class InstructionEdit:
+    """Own one marked block per harness, never the surrounding user text."""
+    def __init__(self, path):
+        self.path = path.resolve()
+        if exists(self.path) and not self.path.is_file():
+            raise SetupError(f'Instruction path is not a file: {path}')
+        self.before = fingerprint(self.path)
+        self.original = self.path.read_bytes() if self.path.exists() else None
+        if fingerprint(self.path) != self.before:
+            raise SetupError(f'Instructions changed while reading: {path}')
+        self.data = self.original or b''
+        self.data.decode('utf-8-sig')  # Refuse non-UTF-8 files without rewriting them.
+        self.created = self.original is None
+
+    def update(self, harness, logical_path, record, enabled):
+        begin = f'<!-- superpowers-lite:workflow-{harness}:begin -->'.encode()
+        end = f'<!-- superpowers-lite:workflow-{harness}:end -->'.encode()
+        start, stop = self.data.find(begin), self.data.find(end)
+        present = start >= 0 or stop >= 0
+        if present:
+            if (self.data.count(begin) != 1 or self.data.count(end) != 1 or stop < start
+                    or (start and self.data[start-1:start] != b'\n' and self.data[:start] != b'\xef\xbb\xbf')
+                    or self.data[stop+len(end):stop+len(end)+1] not in (b'', b'\r', b'\n')):
+                raise SetupError(f'Malformed/duplicate workflow markers: {logical_path}')
+            stop += len(end)
+            if not record:
+                raise SetupError(f'Unowned workflow block: {logical_path}; reconcile it before installing.')
+            if hashlib.sha256(self.data[start:stop]).hexdigest() != record['digest']:
+                raise SetupError(f'User-modified workflow block: {logical_path}; preserve edits before updating/uninstalling.')
+        elif record and self.original is not None:
+            raise SetupError(f'Missing owned workflow block: {logical_path}; reconcile it before updating/uninstalling.')
+        if record:
+            self.created = self.created or record['created']
+        if not enabled:
+            if present:
+                prefix, suffix = record['prefix'].encode(), record['suffix'].encode()
+                # Restore owned padding, retaining a line break only when
+                # needed to separate user text added on both sides.
+                if prefix and self.data[max(0, start-len(prefix)):start] == prefix:
+                    start -= len(prefix)
+                if self.data[stop:stop+len(suffix)] == suffix:
+                    stop += len(suffix)
+                before, after = self.data[:start], self.data[stop:]
+                separator = suffix if before and after and not before.endswith(b'\n') else b''
+                self.data = before + separator + after
+            return None
+        newline = b'\r\n' if b'\r\n' in self.data else b'\n'
+        body = WORKFLOW_GUIDANCE.strip().encode().replace(b'\n', newline)
+        block = begin + newline + body + newline + end
+        if present:
+            prefix, suffix = record['prefix'].encode(), record['suffix'].encode()
+            self.data = self.data[:start] + block + self.data[stop:]
+        else:
+            prefix = (newline if self.data.endswith(b'\n') else newline * 2) if self.data else b''
+            suffix = newline
+            self.data += prefix + block + suffix
+        return {'path': str(logical_path.absolute()), 'target': str(self.path),
+                'digest': hashlib.sha256(block).hexdigest(), 'created': self.created,
+                'prefix': prefix.decode(), 'suffix': suffix.decode()}
+
+    def result(self):
+        return None if self.created and not self.data else self.data
+
+
 class InstallLock:
     """Serialize planning and application, including reads of ownership state."""
     def __init__(self, store):
@@ -699,7 +778,7 @@ def recover(store):
         print(f'Recovered transaction initialization {ident}; no targets were changed.')
         return
     journal = load_json(read(tx / 'journal.json'))
-    if journal.get('schema') != SCHEMA:
+    if journal.get('schema') not in (2, SCHEMA):
         raise SetupError('Unsupported recovery journal')
     for i, item in enumerate(journal['items']):
         path = Path(item['path'])
@@ -720,7 +799,7 @@ def load_manifest(layout):
     if not layout.manifest.exists():
         return {'schema': SCHEMA, 'installer': VERSION, 'source': REPO, 'harnesses': {}}
     state = load_json(read(layout.manifest))
-    if not isinstance(state, dict) or state.get('schema') != SCHEMA or state.get('source') != REPO or not isinstance(state.get('harnesses'), dict):
+    if not isinstance(state, dict) or state.get('schema') not in (2, SCHEMA) or state.get('source') != REPO or not isinstance(state.get('harnesses'), dict):
         raise SetupError('Unrecognized ownership manifest; refusing automatic replacement.')
     for harness, record in state['harnesses'].items():
         if (harness not in HARNESSES or not isinstance(record, dict) or not isinstance(record.get('entries'), dict)
@@ -733,6 +812,17 @@ def load_manifest(layout):
                 raise SetupError('Invalid entry ownership record')
             if not valid_name(name) or Path(entry['path']) != layout.entry(harness, name).absolute():
                 raise SetupError('Installation paths changed; uninstall using the original home/config paths first.')
+        instruction = record.get('instruction')
+        if instruction is not None:
+            if (not isinstance(instruction, dict)
+                    or not isinstance(instruction.get('path'), str)
+                    or Path(instruction['path']) not in [p.absolute() for p in layout.instruction_paths(harness)]
+                    or not isinstance(instruction.get('target'), str) or not Path(instruction['target']).is_absolute()
+                    or not isinstance(instruction.get('digest'), str) or not re.fullmatch('[a-f0-9]{64}', instruction['digest'])
+                    or not isinstance(instruction.get('created'), bool)
+                    or instruction.get('prefix') not in ('', '\n', '\n\n', '\r\n', '\r\n\r\n')
+                    or instruction.get('suffix') not in ('\n', '\r\n')):
+                raise SetupError('Invalid instruction ownership record or changed harness paths')
         for path, config in record['configs'].items():
             if not Path(path).is_absolute() or not isinstance(config, dict) or not isinstance(config.get('ops'), list):
                 raise SetupError('Invalid configuration ownership record')
@@ -847,7 +937,7 @@ def plugin_conflicts(layout, harnesses):
     return sorted(set(issues))
 
 
-def cleanup_old_instructions(layout, harnesses, plan):
+def cleanup_old_instructions(layout, harnesses, plan, instruction_edit):
     paths = []
     if 'codex' in harnesses:
         paths += [layout.codex / 'AGENTS.md', layout.codex / 'AGENTS.override.md']
@@ -857,10 +947,8 @@ def cleanup_old_instructions(layout, harnesses, plan):
         paths += [layout.claude / 'CLAUDE.md']
     for path in paths:
         if path.is_file():
-            old = read(path)
-            new = OLD_BLOCK_RE.sub('\n', old)
-            if new != old:
-                plan.add(path.resolve(), new.encode('utf-8'), 'remove legacy marked block')
+            edit = instruction_edit(path)
+            edit.data = re.sub(OLD_BLOCK_RE.pattern.encode(), b'\n', edit.data, flags=re.S)
     if 'opencode' in harnesses:
         pattern = re.compile(r'\# superpowers-lite:env:begin.*?\# superpowers-lite:env:end\r?\n?', re.S)
         for name in ('.profile', '.bashrc', '.zshenv', '.zshrc'):
@@ -942,8 +1030,34 @@ def prepare(args, layout, temp):
         if key not in edits:
             edits[key] = ConfigEdit(path)
         return edits[key]
+    instructions = {}
+    def instruction_edit(path):
+        key = str(path.resolve())
+        if key not in instructions:
+            instructions[key] = InstructionEdit(path)
+        return instructions[key]
+    cleanup_old_instructions(layout, selected, plan, instruction_edit)
     for harness in sorted(selected):
         prior = old['harnesses'].get(harness, {})
+        tuning = copy.deepcopy(prior.get('tuning', {}))
+        if args.workflow_guidance is not None:
+            tuning['workflow_guidance'] = args.workflow_guidance
+        guidance = not args.uninstall and tuning.get('workflow_guidance', True)
+        target = layout.instruction_paths(harness)[0] if guidance else None
+        if guidance and harness == 'codex':
+            override = layout.instruction_paths(harness)[1]
+            if instruction_edit(override).data.decode('utf-8-sig').strip():
+                target = override
+        owned_instruction = prior.get('instruction')
+        if owned_instruction:
+            original_path = Path(owned_instruction['path'])
+            if str(original_path.resolve()) != owned_instruction['target']:
+                raise SetupError(f'Instruction link target changed: {original_path}; restore the original target before updating/uninstalling.')
+            if original_path != target:
+                instruction_edit(original_path).update(harness, original_path, owned_instruction, False)
+                owned_instruction = None
+        instruction_record = (instruction_edit(target).update(harness, target, owned_instruction, True)
+                              if target is not None else None)
         for path, record in prior.get('configs', {}).items():
             config(Path(path)).release(record)
         next_names = [] if args.uninstall else [args.name_prefix + s for s in wanted]
@@ -978,9 +1092,28 @@ def prepare(args, layout, temp):
                     (stage / 'agents' / 'openai.yaml').write_text('policy:\n  allow_implicit_invocation: false\n', encoding='utf-8')
                 plan.add(path, stage, 'manual skill entry')
             entries[name] = {'path': str(path.absolute()), 'digest': fingerprint(stage), 'upstream_name': skill}
-        tuning = copy.deepcopy(prior.get('tuning', {}))
         if harness == 'opencode':
             edit = config(layout.config(harness))
+            # A new V1 AGENTS.md would suppress existing Claude global rules.
+            # Keep that previously active fallback as a reversible explicit input.
+            # OpenCode V1 uses this fixed fallback, not CLAUDE_CONFIG_DIR.
+            fallback = layout.home / '.claude' / 'CLAUDE.md'
+            agents = layout.opencode / 'AGENTS.md'
+            previously_absent = instruction_edit(agents).original is None
+            still_owned_file = prior.get('instruction', {}).get('created', False) if prior.get('instruction') else False
+            preserve_fallback = (previously_absent or (still_owned_file and tuning.get('claude_instruction_fallback', False)))
+            if (guidance and major == 1 and preserve_fallback and fallback.is_file()
+                    and not any(os.environ.get(k, '').lower() in ('1', 'true') for k in
+                                ('OPENCODE_DISABLE_CLAUDE_CODE', 'OPENCODE_DISABLE_CLAUDE_CODE_PROMPT'))):
+                if re.search(r'using-superpowers|superpowers-codex\s+bootstrap|<superpowers', OLD_BLOCK_RE.sub('', read(fallback)), re.I):
+                    raise SetupError(f'Existing full bootstrap in OpenCode instruction fallback: {fallback}')
+                present, value = get_at(edit.data, ['instructions'])
+                if present and (not isinstance(value, list) or not all(isinstance(p, str) for p in value)):
+                    raise SetupError(f'{edit.path}: instructions must be a list of paths')
+                paths = list(value) if present else []
+                if fallback.as_posix() not in paths:
+                    edit.put(['instructions'], paths + [fallback.as_posix()])
+                tuning['claude_instruction_fallback'] = True
             if args.migrate_legacy:
                 names = {p.name for p in legacy if (p / 'SKILL.md').is_file()}
                 present, rules = get_at(edit.data, ['permission', 'skill'])
@@ -1017,18 +1150,23 @@ def prepare(args, layout, temp):
             if any(get_at(edit.data, p) == (True, False) for p in (['features', 'multi_agent'], ['agents', 'enabled'])):
                 warn('Codex multi-agent is disabled; use --enable-codex-multi-agent to change that preference.')
         state['harnesses'][harness] = {'entries': entries, 'bundle': digest, 'provenance': provenance, 'tuning': tuning,
-                                      'opencode_major': major if harness == 'opencode' else None, 'configs': {}}
+                                      'opencode_major': major if harness == 'opencode' else None, 'configs': {},
+                                      'instruction': instruction_record}
         for key, edit in edits.items():
             if edit.ops:
                 state['harnesses'][harness]['configs'][key] = {'ops': copy.deepcopy(edit.ops), 'created': edit.created}
                 edit.ops.clear()
-    cleanup_old_instructions(layout, selected, plan)
+    for edit in instructions.values():
+        result = edit.result()
+        if result != edit.original:
+            plan.add(edit.path, result, 'scoped workflow guidance; preserve surrounding instructions', expected=edit.before)
     for edit in edits.values():
         result = edit.result()
         if result != edit.original:
             warn(f'Reformatting {edit.path}; original comments remain in the transaction backup. Values are parsed and validated.')
             plan.add(edit.path, result, 'validated config and reversible owned settings', expected=edit.before)
     state['installer'] = VERSION
+    state['schema'] = SCHEMA
     plan.add(layout.manifest, json_bytes(state), 'per-harness ownership and exact source provenance')
     if args.prune:
         used = {r['bundle'] for r in state['harnesses'].values()}
@@ -1140,6 +1278,8 @@ def validate_ref_installations(previous, candidate, temporary):
                 raise SetupError('Candidate uninstall validation failed')
             if any(layout.config(h).exists() for h in ('codex', 'opencode')):
                 raise SetupError('Candidate uninstall left owned configuration')
+            if any(path.exists() for h in HARNESSES for path in layout.instruction_paths(h)):
+                raise SetupError('Candidate uninstall left owned workflow instructions')
             main(common + ['--source', str(candidate)])
             main(common + ['--uninstall', '--prune'])
 
@@ -1216,6 +1356,8 @@ def parser():
     ap.add_argument('--enable-codex-multi-agent', action='store_true', help='explicitly enable global Codex multi-agent settings')
     ap.add_argument('--codex-subagent-model', help='explicit global model default, restored on uninstall')
     ap.add_argument('--codex-subagent-effort', choices=['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'], help='explicit global effort, works without model option')
+    ap.add_argument('--workflow-guidance', action=argparse.BooleanOptionalAction, default=None,
+                    help='managed global reminders for explicitly started workflows (default: enabled; preference retained)')
     ap.add_argument('--migrate-legacy', action='store_true', help='migrate verified old shared layout for all affected harnesses')
     ap.add_argument('--uninstall', action='store_true', help='remove selected owned entries and restore owned settings')
     ap.add_argument('--prune', action='store_true', help='also remove unused private libraries; close old sessions first')
@@ -1263,7 +1405,7 @@ def main(argv=None):
             for harness in sorted(selected):
                 prefix = '$' if harness == 'codex' else '/'
                 print(harness + ': ' + '  '.join(prefix + n for n in state['harnesses'][harness]['entries']))
-        print('Restart affected harness sessions. No bootstrap hooks or global prompt instructions were installed.')
+        print('Restart affected harness sessions. Managed workflow reminders apply only after explicit invocation; no bootstrap hooks are installed.')
     return 0
 
 

@@ -114,7 +114,9 @@ def analyze(events, rollouts, skill, source=None):
     contexts = [e.get('payload', {}) for e in rollouts if e.get('type') == 'turn_context']
     models = sorted({p['model'] for p in contexts if p.get('model')})
     responses = [e.get('payload', {}) for e in rollouts if e.get('type') == 'response_item']
-    wrapper = any(p.get('role') in ('user', 'developer') and '<!-- superpowers-lite:' in json.dumps(p) for p in responses)
+    wrapper = any(p.get('role') in ('user', 'developer') and re.search(r'<!-- superpowers-lite:[0-9.]+:codex:', json.dumps(p)) for p in responses)
+    guidance = any(p.get('role') in ('user', 'developer') and
+                   '## Superpowers Lite: explicitly started workflows' in output_text(p.get('content', '')) for p in responses)
     functions = [p for p in responses if p.get('type') in ('function_call', 'custom_tool_call')]
     received = '\n'.join(output_text(p.get('output', '')) for p in responses
                          if p.get('type') in ('function_call_output', 'custom_tool_call_output')).replace('\r\n', '\n')
@@ -133,6 +135,7 @@ def analyze(events, rollouts, skill, source=None):
             'workflow_efforts': sorted({p['effort'] for p in contexts
                                        if p.get('model') != 'codex-auto-review' and p.get('effort')}),
             'wrapper_injected': wrapper, 'skill_reads_in_commands': sorted(read_skills),
+            'workflow_guidance_injected': guidance,
             'platform_note_reads_in_commands': sorted(read_notes),
             'complete_skill_bodies_in_tool_results': sorted(complete_bodies),
             'complete_platform_note_in_tool_results': lite.TOOL_NOTES['codex'] in received,
