@@ -852,18 +852,24 @@ def cleanup_old_instructions(layout, harnesses, plan):
 
 
 def check_collision(layout, harness, name, target, removed):
-    roots = [layout.home / '.agents' / 'skills', layout.claude / 'skills', layout.opencode / 'skills']
-    if not layout.isolated:
-        for p in [Path.cwd(), *Path.cwd().parents]:
-            roots += [p / '.agents' / 'skills', p / '.claude' / 'skills', p / '.opencode' / 'skills']
-    for root in dict.fromkeys(roots):
-        path = root / name
+    projects = [] if layout.isolated else [Path.cwd(), *Path.cwd().parents]
+    if harness == 'codex':
+        roots = [layout.home / '.agents' / 'skills', layout.codex / 'skills']
+        roots += [p / sub / 'skills' for p in projects for sub in ('.agents', '.codex')]
+    elif harness == 'claude':
+        roots = [layout.claude / 'skills'] + [p / '.claude' / 'skills' for p in projects]
+    else:
+        roots = [layout.home / '.agents' / 'skills', layout.claude / 'skills', layout.opencode / 'skills']
+        roots += [p / sub / 'skills' for p in projects for sub in ('.agents', '.claude', '.opencode')]
+    candidates = [root / name for root in dict.fromkeys(roots)]
+    if harness == 'claude':
+        candidates += [p / 'commands' / (name + '.md') for p in [layout.claude] + [p / '.claude' for p in projects]]
+    if harness == 'opencode':
+        candidates += [root / (name + '.md') for root in dict.fromkeys(roots)]
+    for path in dict.fromkeys(candidates):
         if path.absolute() == target.absolute() or path in removed:
             continue
-        # OpenCode's own entry does not shadow a Claude command. Claude does
-        # not discover OpenCode skills, but an actual Claude skill would shadow it.
-        relevant = harness == 'opencode' or (harness == 'claude' and root == layout.claude / 'skills') or (harness == 'codex' and root == layout.home / '.agents' / 'skills')
-        if exists(path) and relevant:
+        if exists(path):
             raise SetupError(f'Conflicting discoverable skill: {path}. Remove/migrate it; no global discovery-disable workaround is used.')
 
 

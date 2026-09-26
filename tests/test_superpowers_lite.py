@@ -320,6 +320,35 @@ class InstallerTests(unittest.TestCase):
         with self.assertRaisesRegex(lite.SetupError, 'Conflicting discoverable'):
             self.run_cli('--only', 'opencode')
 
+    def test_project_and_ancestor_collisions(self):
+        project = self.base / 'project'
+        child = project / 'nested'
+        child.mkdir(parents=True)
+        name = 'superpowers-brainstorming'
+        cases = [('codex', '.agents/skills/' + name + '/SKILL.md'),
+                 ('codex', '.codex/skills/' + name + '/SKILL.md'),
+                 ('claude', '.claude/skills/' + name + '/SKILL.md'),
+                 ('claude', '.claude/commands/' + name + '.md'),
+                 ('opencode', '.opencode/skills/' + name + '.md')]
+        self.layout.isolated = False
+        for harness, relative in cases:
+            with self.subTest(harness=harness, relative=relative):
+                path = project / relative
+                put(path, 'unrelated user skill')
+                with patch.object(Path, 'cwd', return_value=child), self.assertRaisesRegex(lite.SetupError, 'Conflicting discoverable'):
+                    lite.check_collision(self.layout, harness, name, self.layout.entry(harness, name), [])
+                path.unlink()
+                # Remove this fixture's empty skill directory before the next case.
+                if path.name == 'SKILL.md':
+                    path.parent.rmdir()
+
+    def test_isolated_home_ignores_project_collisions(self):
+        project = self.base / 'project'
+        name = 'superpowers-brainstorming'
+        put(project / '.agents' / 'skills' / name / 'SKILL.md', 'user skill')
+        with patch.object(Path, 'cwd', return_value=project):
+            lite.check_collision(self.layout, 'codex', name, self.layout.entry('codex', name), [])
+
     def test_bootstrap_config_and_discovered_plugin_detection(self):
         for mode in ['v1', 'v2', 'file']:
             with self.subTest(mode=mode):
