@@ -147,4 +147,49 @@ untracked; this report and the reusable runner are tracked.
 
 The existing portable installer suite was also rerun: 71 tests, 69 passed
 and two Windows symlink-privilege skips. Runner syntax and Git whitespace
-checks passed. No production installer changes were made for this evaluation.
+checks passed. No production installer changes were made for the baseline evaluation.
+
+## Follow-up: scoped global guidance in 2.1
+
+Installer commit `6147d36` adds a managed global instruction block for
+explicitly started workflows. It reminds the model to read required skills,
+track handoffs/cleanup, and check outstanding obligations before completion.
+It does not authorize automatic invocation. The follow-up used the same
+upstream revision and Codex CLI; the guidance text remained unchanged during
+the trials. The final installer also includes additional ownership edge-case
+fixes verified by regression tests.
+
+- **Implicit-debugging control: pass.** The global block appeared in actual
+  model input, but no Superpowers wrapper or private skill was loaded. Luna
+  reproduced the seeded defect and reported its cause without editing files.
+- **First SDD attempt: excluded.** Despite the GPT-5.6-Luna constraint, the
+  controller chose `gpt-6-luna` for a child. The test was manually stopped
+  when this was detected. It is not evidence of GPT-5.6-Luna-only success.
+- **SDD rerun with explicit model inheritance: targeted handoff/cleanup
+  checks passed.** All five task subagents used GPT-5.6-Luna at medium
+  reasoning. Luna read the complete finishing skill (as well as required
+  SDD/review/worktree guidance), implemented and reviewed the feature, fixed
+  the stale checklist found during review, and performed scoped re-review.
+  It removed `.superpowers/sdd/plan/`, passed all seven independently rerun
+  tests, and presented merge locally / push and create a PR / keep the branch
+  options without executing them. The saved project is clean. Runtime was
+  433 seconds.
+
+This is an encouraging single sample, not a measured reliability improvement
+or an isolated causal comparison: the successful rerun also used the explicit
+inheritance instruction documented above. The reminder does not itself fix
+model selection or Windows/Bash path handling; path retries still occurred.
+It does not establish perfect compliance with every upstream instruction.
+
+Evidence: `.superpowers-review/luna/scoped-guidance/` contains the control and
+stopped attempt; `.superpowers-review/luna/scoped-guidance-inherit/` contains
+the successful controlled rerun. The runner now distinguishes the global
+reminder from actual wrapper injection, preventing a reminder-only control
+from being scored as explicit skill activation.
+
+Installer verification: 90 regression tests passed on WSL Linux; Windows
+passed with four symlink-privilege skips. Native mock-provider checks confirmed
+reminder loading in Codex, OpenCode v1, and Claude, including Codex override
+precedence, continued manual-only discovery, and preservation of OpenCode v1's
+existing Claude fallback. OpenCode v2 native verification was unavailable
+because its optional local binary fixture was absent.
