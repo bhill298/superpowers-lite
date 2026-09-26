@@ -193,3 +193,41 @@ reminder loading in Codex, OpenCode v1, and Claude, including Codex override
 precedence, continued manual-only discovery, and preservation of OpenCode v1's
 existing Claude fallback. OpenCode v2 native verification was unavailable
 because its optional local binary fixture was absent.
+
+## Retest without model-inheritance guidance
+
+At the user's request, the full SDD case was rerun with the managed global
+block enabled and `--inherit-subagent-model` omitted. The runner, upstream
+file hashes, model/effort settings, and Codex CLI version matched the preceding
+successful diagnostic run. The installer was the committed 2.1 version;
+the workflow guidance text was unchanged.
+
+```text
+python tests/live_skill_checks.py --source .superpowers-review/luna/upstream --output .superpowers-review/luna/scoped-guidance-no-inherit-retest --cases sdd-complete --jobs 1 --timeout 900
+```
+
+**Result: model constraint failed; finishing/cleanup outcome inconclusive.**
+The actual GPT-5.6-Luna controller input contained the global guidance and
+explicit skill wrapper. It read the full SDD skill and platform notes,
+recovered from Windows/WSL path errors, and attempted to spawn an implementer
+with the explicit model value `GPT-5.6-Luna`. The tool rejected that identifier,
+listing `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, and
+`gpt-5.6-terra` as available overrides. The controller then chose `gpt-6-luna`
+as the closest available model, violating the test's explicit instruction
+to use only GPT-5.6-Luna. The child session confirms GPT-6-Luna at medium
+reasoning; it was not merely an unsuccessful spawn request.
+
+The mixed-model run was manually stopped after 234 seconds. Its partial
+implementation passed independent checks, but it had not reached the
+finishing skill or workflow cleanup. Those stages cannot be scored as either
+successes or failures from this interrupted run. The global block alone did
+not prevent the model-selection failure; whether it is sufficient for the
+original finishing/cleanup problem without the inheritance instruction
+remains unestablished. No extra recovery prompt or production change was
+introduced during this retest.
+
+Evidence is retained in the ignored
+`.superpowers-review/luna/scoped-guidance-no-inherit-retest/` directory.
+The runner preserved session records and project artifacts, then removed
+the temporary home and its copied authentication. Real harness configuration
+was not changed.
