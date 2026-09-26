@@ -454,6 +454,34 @@ class InstallerTests(unittest.TestCase):
             plan.apply()
         self.assertEqual(p.read_text(), 'concurrent change')
 
+    def test_config_edit_during_planning_is_preserved(self):
+        cfg = self.layout.config('codex')
+        put(cfg, 'model = "original"\n')
+        original = lite.ConfigEdit.result
+        def user_edit(edit):
+            result = original(edit)
+            if edit.path == cfg:
+                put(cfg, 'model = "user-choice"\n')
+            return result
+        with patch.object(lite.ConfigEdit, 'result', user_edit):
+            with self.assertRaisesRegex(lite.SetupError, 'Changed since reading'):
+                self.run_cli('--only', 'codex', '--enable-codex-multi-agent')
+        self.assertEqual(lite.tomllib.loads(cfg.read_text()), {'model': 'user-choice'})
+        self.assertFalse(self.layout.manifest.exists())
+
+    def test_config_created_during_planning_is_preserved(self):
+        cfg = self.layout.config('opencode')
+        original = lite.ConfigEdit.result
+        def user_create(edit):
+            result = original(edit)
+            if edit.path == cfg:
+                put(cfg, '{"model":"user-choice"}')
+            return result
+        with patch.object(lite.ConfigEdit, 'result', user_create):
+            with self.assertRaisesRegex(lite.SetupError, 'Changed since reading'):
+                self.run_cli('--only', 'opencode')
+        self.assertEqual(json.loads(cfg.read_text()), {'model': 'user-choice'})
+
     def test_uninstall_one_harness_keeps_other_libraries(self):
         self.run_cli()
         before = self.manifest()

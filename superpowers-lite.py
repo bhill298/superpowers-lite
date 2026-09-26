@@ -41,6 +41,7 @@ ENV_VAR = 'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS'
 HARNESSES = ('codex', 'opencode', 'claude')
 NAME_RE = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*\Z')
 OLD_BLOCK_RE = re.compile(r'\n?<!-- superpowers-lite:\w+:begin -->.*?<!-- superpowers-lite:\w+:end -->\n?', re.S)
+UNSPECIFIED = object()
 
 
 class SetupError(Exception):
@@ -422,7 +423,10 @@ def set_at(data, path, present, value):
 class ConfigEdit:
     def __init__(self, path):
         self.path = path.resolve() if linked(path) else path.absolute()
+        self.before = fingerprint(self.path)
         self.original = self.path.read_bytes() if self.path.exists() else None
+        if fingerprint(self.path) != self.before:
+            raise SetupError(f'Configuration changed while reading: {self.path}')
         self.created = self.original is None
         text = self.original.decode('utf-8-sig') if self.original else ''
         try:
@@ -536,11 +540,13 @@ class Plan:
         self.store = store
         self.changes = {}
 
-    def add(self, path, content, label=''):
+    def add(self, path, content, label='', expected=UNSPECIFIED):
         path = path.absolute()
         if path in self.changes:
             raise SetupError(f'Overlapping planned writes: {path}')
         before = fingerprint(path)
+        if expected is not UNSPECIFIED and before != expected:
+            raise SetupError(f'Changed since reading configuration: {path}')
         if isinstance(content, bytes) and path.is_file() and not linked(path) and path.read_bytes() == content:
             return
         if content is None and before is None:
@@ -988,7 +994,7 @@ def prepare(args, layout, temp):
         result = edit.result()
         if result != edit.original:
             warn(f'Reformatting {edit.path}; original comments remain in the transaction backup. Values are parsed and validated.')
-            plan.add(edit.path, result, 'validated config and reversible owned settings')
+            plan.add(edit.path, result, 'validated config and reversible owned settings', expected=edit.before)
     state['installer'] = VERSION
     plan.add(layout.manifest, json_bytes(state), 'per-harness ownership and exact source provenance')
     if args.prune:
