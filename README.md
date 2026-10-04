@@ -135,7 +135,7 @@ Installer 2.2.1 ignores `ANTIGRAVITY_CONFIG_DIR`, because the installed `agy` CL
 
 If the original Antigravity adapter installed entries into a custom directory using `ANTIGRAVITY_CONFIG_DIR`, the new installer refuses to retarget the existing ownership record. First use the installer from commit `9737b5c` with the original environment and `--only antigravity --uninstall`, then unset the variable and install with the current version. Preserve or reconcile any user-modified owned files before uninstalling. Default-path installations update normally.
 
-The 13 Antigravity-specific regression tests cover the audited rule/skill roots, plugin conflicts, ignored override, preservation of existing instructions, modified entries, repeated installation, and uninstall. For 2.2.1, the full 114-test suite passed on WSL Ubuntu and passed on Windows with five symlink-privilege skips. The installed CLI examined during review was 1.2.16. End-to-end model prompt behavior and subagent workflows have not been tested natively.
+The 13 Antigravity-specific regression tests cover the audited rule/skill roots, plugin conflicts, ignored override, preservation of existing instructions, modified entries, repeated installation, and uninstall. For 2.2.1, the full 114-test suite passed on WSL Ubuntu and passed on Windows with five symlink-privilege skips. Native CLI 1.2.16 checks passed for all 13 entries, global instruction loading, manual-only discovery, repeated installation, and uninstall. Selected live-model trials also passed; see [the Antigravity evaluation](tests/ANTIGRAVITY_EVALUATION.md) for exact coverage, test setup failures, and limitations.
 
 ## Migrate the original installer
 
@@ -219,3 +219,12 @@ python tests/native_pi_checks.py --source <upstream-checkout> --pi-package <inst
 It requires Node and the installed Pi npm package, uses temporary homes and an in-memory model transport, and needs no credentials or model usage. On Pi 0.79.9 it verified three manual entries, absence from automatic skill advertising, explicit command expansion (even with command discovery disabled), global instruction/fallback preservation, and uninstall. It also checked that an extension-registered delegation tool can coexist with the entries, using a synthetic extension without starting child agents. This is a harness integration test, not a live-model workflow test or certification of a particular subagent extension.
 
 The 2.2 portable suite passed all 101 tests on WSL Ubuntu and passed on Windows with five symlink-privilege skips. This includes Pi install/update/uninstall, custom configuration paths, instruction-file precedence, modified-file protection, discovery collisions, and the shared transaction/recovery checks.
+
+Antigravity has separate native and live-model runners:
+
+```text
+python tests/native_antigravity_checks.py --source <upstream-checkout> --output .superpowers-review/antigravity/native
+python tests/live_antigravity_checks.py --source <upstream-checkout> --output .superpowers-review/antigravity/live
+```
+
+Both require `agy` on PATH and use temporary homes. The native runner uses a localhost scripted Gemini endpoint with a fake key; it asserts command expansion, complete private-file reads, and lifecycle behavior. The live runner consumes authenticated model usage through the existing OS keyring login and records synthetic-project workflow trials for manual grading. It requires Git, Python, and Bash, and adds command permissions only to its temporary profile. Output directories must be new. See [tests/ANTIGRAVITY_EVALUATION.md](tests/ANTIGRAVITY_EVALUATION.md) for results and reproduction details.
