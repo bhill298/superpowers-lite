@@ -77,6 +77,62 @@ class AntigravityTests(unittest.TestCase):
         self.assertEqual(path.read_text(), 'Load using-superpowers.\n')
         self.assertFalse((self.layout.antigravity / 'AGENTS.md').exists())
 
+    def test_same_name_in_each_global_skill_root_blocks_install_without_writes(self):
+        for relative in ('.gemini/config/skills', '.gemini/antigravity-cli/skills',
+                         '.gemini/skills', '.agents/skills'):
+            with self.subTest(relative=relative):
+                path = self.home / relative / 'superpowers-brainstorming/SKILL.md'
+                fixtures.put(path, '---\nname: superpowers-brainstorming\ndescription: Existing\n---\nOriginal\n')
+                before = self.snapshot(self.home)
+                with self.assertRaisesRegex(lite.SetupError, 'unowned entry|Conflicting discoverable skill'):
+                    self.run_cli('--only', 'antigravity')
+                self.assertEqual(before, self.snapshot(self.home))
+                path.unlink()
+                path.parent.rmdir()
+
+    def test_each_project_customization_root_is_checked(self):
+        project = self.base / 'project'
+        name = 'superpowers-brainstorming'
+        self.layout.isolated = False
+        with patch.object(Path, 'cwd', return_value=project / 'nested'):
+            for directory in ('.agents', '.agent', '_agents', '_agent'):
+                path = project / directory / 'skills' / name / 'SKILL.md'
+                fixtures.put(path, 'Existing skill\n')
+                with self.assertRaisesRegex(lite.SetupError, 'Conflicting discoverable skill'):
+                    lite.check_collision(self.layout, 'antigravity', name,
+                                         self.layout.entry('antigravity', name), [])
+                path.unlink()
+                path.parent.rmdir()
+
+    def test_full_plugins_and_bootstrap_skills_in_global_roots_are_rejected(self):
+        for directory in ('.gemini/config', '.gemini/antigravity-cli', '.gemini'):
+            for relative in ('plugins/superpowers/plugin.json', 'skills/superpowers/SKILL.md',
+                             'skills/using-superpowers/SKILL.md'):
+                with self.subTest(directory=directory, relative=relative):
+                    path = self.home / directory / relative
+                    fixtures.put(path, '{}\n')
+                    before = self.snapshot(self.home)
+                    with self.assertRaisesRegex(lite.SetupError, 'full bootstrap/plugin'):
+                        self.run_cli('--only', 'antigravity')
+                    self.assertEqual(before, self.snapshot(self.home))
+                    path.unlink()
+                    path.parent.rmdir()
+
+    def test_unrelated_skills_and_plugins_are_preserved(self):
+        paths = []
+        for directory in ('.gemini/config', '.gemini/antigravity-cli', '.gemini'):
+            for relative in ('skills/unrelated/SKILL.md', 'plugins/unrelated/plugin.json'):
+                path = self.home / directory / relative
+                fixtures.put(path, 'Unrelated user content\n')
+                paths.append(path)
+        self.run_cli('--only', 'antigravity')
+        before = self.snapshot(self.home)
+        self.run_cli('--only', 'antigravity')
+        self.assertEqual(before, self.snapshot(self.home))
+        self.run_cli('--only', 'antigravity', '--uninstall', '--prune')
+        for path in paths:
+            self.assertEqual(path.read_text(), 'Unrelated user content\n')
+
 
 if __name__ == '__main__':
     unittest.main()

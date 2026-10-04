@@ -139,6 +139,8 @@ Known full Superpowers plugins, hooks, discoverable full-library aliases, and un
 
 For Antigravity, the bootstrap audit includes `~/.gemini/AGENTS.md`, `~/.gemini/GEMINI.md`, the equivalent files in `~/.gemini/config`, and modular rules in `~/.gemini/config/rules` and `~/.gemini/antigravity-cli/rules`. It also checks project/ancestor `GEMINI.md` and customization-directory instructions/rules. These additional files are inspected, not rewritten; the managed reminder stays in `~/.gemini/config/AGENTS.md`. See the [Antigravity rule locations](https://www.antigravity.google/docs/rules/).
 
+Antigravity skill collision checks cover `~/.gemini/config/skills`, `~/.gemini/antigravity-cli/skills`, `~/.gemini/skills`, the shared `.agents/skills` root, and project/ancestor customization roots. Known full Superpowers plugins and bootstrap skill directories are also rejected under the global Antigravity roots. Arbitrary paths registered through customization JSON files and plugins with unrelated names remain outside this audit. The [CLI skill documentation](https://www.antigravity.google/docs/skills/#cli-skill-locations) identifies the dedicated CLI directory.
+
 The original Windows installer used `setx OPENCODE_DISABLE_CLAUDE_CODE_SKILLS 1` without recording ownership or the prior value. If you know that value came from the old installer, remove it explicitly:
 
 ```powershell

@@ -234,6 +234,9 @@ class Layout:
             return self.claude / 'commands' / (name + '.md')
         return getattr(self, harness) / 'skills' / name
 
+    def antigravity_roots(self):
+        return [self.antigravity, self.home / '.gemini' / 'antigravity-cli', self.home / '.gemini']
+
     def config(self, harness):
         if harness == 'codex':
             return self.codex / 'config.toml'
@@ -915,10 +918,14 @@ def plugin_conflicts(layout, harnesses):
                     if 'superpowers' in json.dumps(data.get(key, [])).lower():
                         issues.append(f'{settings}: {key}')
     if 'antigravity' in harnesses:
-        for directory in [layout.antigravity] + [p / n for p in projects for n in ('.agents', '.agent', '_agents', '_agent')]:
+        for directory in layout.antigravity_roots() + [p / n for p in projects for n in ('.agents', '.agent', '_agents', '_agent')]:
             for sub in ('plugins', 'plugin'):
                 if (directory / sub).is_dir():
                     issues.extend(str(p) for p in (directory / sub).iterdir() if 'superpowers' in p.name.lower())
+            for name in ('superpowers', 'using-superpowers'):
+                path = directory / 'skills' / name
+                if exists(path) and not owned_marker(path):
+                    issues.append(f'{path}: full bootstrap remains discoverable')
     for path in dict.fromkeys(configs):
         if not path.is_file():
             continue
@@ -1046,7 +1053,7 @@ def check_collision(layout, harness, name, target, removed):
         roots = [layout.pi / 'skills', layout.home / '.agents' / 'skills']
         roots += [p / sub / 'skills' for p in projects for sub in ('.pi', '.agents')]
     elif harness == 'antigravity':
-        roots = [layout.antigravity / 'skills', layout.home / '.agents' / 'skills']
+        roots = [p / 'skills' for p in layout.antigravity_roots()] + [layout.home / '.agents' / 'skills']
         roots += [p / sub / 'skills' for p in projects for sub in ('.agents', '.agent', '_agents', '_agent')]
     else:
         roots = [layout.home / '.agents' / 'skills', layout.claude / 'skills', layout.opencode / 'skills']
