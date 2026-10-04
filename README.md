@@ -137,6 +137,8 @@ Include every affected harness because the original layout was shared. Migration
 
 Known full Superpowers plugins, hooks, discoverable full-library aliases, and unmarked bootstrap instructions block installation. Disable/remove those through their original harness or installation mechanism first; Lite does not silently uninstall another plugin. Audit checks known global/custom config locations and project ancestors of the current directory. It cannot certify all repositories, organization-managed policy, arbitrary launcher instructions, or custom plugin behavior.
 
+For Antigravity, the bootstrap audit includes `~/.gemini/AGENTS.md`, `~/.gemini/GEMINI.md`, the equivalent files in `~/.gemini/config`, and modular rules in `~/.gemini/config/rules` and `~/.gemini/antigravity-cli/rules`. It also checks project/ancestor `GEMINI.md` and customization-directory instructions/rules. These additional files are inspected, not rewritten; the managed reminder stays in `~/.gemini/config/AGENTS.md`. See the [Antigravity rule locations](https://www.antigravity.google/docs/rules/).
+
 The original Windows installer used `setx OPENCODE_DISABLE_CLAUDE_CODE_SKILLS 1` without recording ownership or the prior value. If you know that value came from the old installer, remove it explicitly:
 
 ```powershell

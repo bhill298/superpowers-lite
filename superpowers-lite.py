@@ -963,6 +963,14 @@ def plugin_conflicts(layout, harnesses):
         instructions += layout.instruction_paths('pi')
     if 'antigravity' in harnesses:
         instructions += layout.instruction_paths('antigravity')
+        instructions += [layout.home / '.gemini' / n for n in ('AGENTS.md', 'GEMINI.md')]
+        instructions += [p / 'GEMINI.md' for p in projects]
+        customization_dirs = [layout.antigravity, layout.home / '.gemini' / 'antigravity-cli']
+        customization_dirs += [p / n for p in projects for n in ('.agents', '.agent', '_agents', '_agent')]
+        for directory in customization_dirs:
+            instructions += list((directory / 'rules').glob('*.md'))
+        instructions += [p / sub / n for p in projects for sub in ('.agents', '.agent', '_agents', '_agent')
+                         for n in ('AGENTS.md', 'GEMINI.md')]
     instructions += [p / n for p in projects for n in ('AGENTS.md', 'AGENTS.override.md', 'CLAUDE.md', '.claude/CLAUDE.md')]
     for path in dict.fromkeys(instructions):
         if path.is_file():
