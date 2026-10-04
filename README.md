@@ -1,6 +1,6 @@
 ﻿# Superpowers Lite 2.2
 
-One Python installer for manually starting Superpowers workflows in Codex, OpenCode, Claude Code, and Pi, with skill chaining authorized inside that workflow. A short global reminder reinforces required handoffs and cleanup after explicit invocation. No startup bootstrap or session hook is installed.
+One Python installer for manually starting Superpowers workflows in Codex, OpenCode, Claude Code, Pi, and Antigravity CLI, with skill chaining authorized inside that workflow. A short global reminder reinforces required handoffs and cleanup after explicit invocation. No startup bootstrap or session hook is installed.
 
 ## Install
 
@@ -15,7 +15,7 @@ Omitting `--only` selects harnesses found on PATH or with an existing configurat
 
 Restart affected harness sessions after installation. The default entry points are:
 
-| Workflow | Codex | Claude / OpenCode | Pi |
+| Workflow | Codex | Claude / OpenCode / Antigravity | Pi |
 |---|---|---|---|
 | Brainstorming | `$superpowers-brainstorming` | `/superpowers-brainstorming` | `/skill:superpowers-brainstorming` |
 | Writing plans | `$superpowers-writing-plans` | `/superpowers-writing-plans` | `/skill:superpowers-writing-plans` |
@@ -42,6 +42,7 @@ The old shared `.agents/skills` installation plus Claude links exposed the same 
 | OpenCode v2 | Same native OpenCode directory | `metadata.opencode/autoinvoke: false` |
 | Claude Code | `~/.claude/commands/<name>.md` | `disable-model-invocation: true` on command-format skills |
 | Pi | `$PI_CODING_AGENT_DIR/skills/<name>/SKILL.md`, default `~/.pi/agent/skills` | `disable-model-invocation: true` hides entries from automatic skill advertising; `/skill:<name>` expands them explicitly |
+| Antigravity CLI | `~/.gemini/config/skills/<name>/SKILL.md` | Generated `disable-model-invocation: true`; explicit `/<name>` invocation |
 
 Claude supports command files as skills. OpenCode does not discover that directory as a skill source, so installing all five harnesses creates no duplicate `.agents`/`.claude` skill trees. Lite does not disable discovery of unrelated Claude skills. Known same-name collisions in standard roots are rejected instead of silently overwritten.
 
@@ -59,6 +60,7 @@ By default, Lite installs a short instruction block that applies only after you 
 | OpenCode | `$OPENCODE_CONFIG_DIR/AGENTS.md`, normally `~/.config/opencode/AGENTS.md` |
 | Claude Code | `$CLAUDE_CONFIG_DIR/CLAUDE.md`, normally `~/.claude/CLAUDE.md` |
 | Pi | First existing file in `$PI_CODING_AGENT_DIR`: `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`; creates `AGENTS.md` if none exists |
+| Antigravity CLI | `~/.gemini/config/AGENTS.md` |
 
 The block is enclosed by `<!-- superpowers-lite:workflow-<harness>:begin -->` and the matching `:end -->` marker. Ownership is recorded in the manifest. Updates replace only an unchanged owned block; uninstall removes it and removes an installer-created file only if nothing else remains. Existing user text, UTF-8 BOMs, and line endings outside the block are preserved. Edited, missing, malformed, duplicate, or unowned blocks stop replacement rather than silently overwriting instructions. Symlinks are retained and their resolved targets tracked; retargeting a managed file requires reconciliation. Project instruction files are not edited.
 
@@ -124,6 +126,16 @@ Pi has no built-in subagent tool. An installed extension can supply one, such as
 For extensions without resume support, the guidance permits a fresh isolated worker with the previous report and remaining findings. That loses the original worker's private context. Explicit model constraints must be preserved; an unsupported override is not permission to switch models. These instructions need model compliance and do not guarantee that every third-party extension can execute every upstream workflow.
 
 Pi also discovers shared `.agents/skills`, project `.pi/skills`, and configured/package skill sources. Lite checks standard roots, including nested skills with ordinary declared names, and known Superpowers extension/package/bootstrap locations. It conservatively ignores skill ignore-filters when checking collisions. Arbitrary custom skill sources, complex YAML name encodings, dynamically registered resources, and extension behavior are outside this audit. Review Pi's startup diagnostics if you add extra sources. Pi's [skill documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) describes manual invocation and discovery.
+
+## Antigravity CLI paths
+
+Use `python superpowers-lite.py --only antigravity`; CLI detection looks for `agy`. Lite installs into the shared `~/.gemini/config` profile. Antigravity's other surfaces can also discover skills there; this is not an isolated CLI-only profile. The generated entries use the same slash-command names as Claude/OpenCode.
+
+Installer 2.2.1 ignores `ANTIGRAVITY_CONFIG_DIR`, because the installed `agy` CLI does not honor that variable, and prints a notice when it is set during a normal Antigravity installation or uninstall. Use `--home <temporary-directory>` for isolated installer tests; that option does not reconfigure a running CLI.
+
+If the original Antigravity adapter installed entries into a custom directory using `ANTIGRAVITY_CONFIG_DIR`, the new installer refuses to retarget the existing ownership record. First use the installer from commit `9737b5c` with the original environment and `--only antigravity --uninstall`, then unset the variable and install with the current version. Preserve or reconcile any user-modified owned files before uninstalling. Default-path installations update normally.
+
+The 13 Antigravity-specific regression tests cover the audited rule/skill roots, plugin conflicts, ignored override, preservation of existing instructions, modified entries, repeated installation, and uninstall. For 2.2.1, the full 114-test suite passed on WSL Ubuntu and passed on Windows with five symlink-privilege skips. The installed CLI examined during review was 1.2.16. End-to-end model prompt behavior and subagent workflows have not been tested natively.
 
 ## Migrate the original installer
 

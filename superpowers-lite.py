@@ -30,7 +30,7 @@ if sys.version_info < (3, 11):
     raise SystemExit('Python 3.11 or newer is required for validated TOML configuration.')
 import tomllib
 
-VERSION = '2.2.0'
+VERSION = '2.2.1'
 SCHEMA = 3
 REPO = 'obra/superpowers'
 DEFAULT_REF = '5bf4e78011075bcfc0dc295f0724994cd123ee71'
@@ -223,7 +223,9 @@ class Layout:
         self.claude = env('CLAUDE_CONFIG_DIR', self.home / '.claude')
         self.pi = env('PI_CODING_AGENT_DIR', self.home / '.pi' / 'agent')
         self.opencode = env('OPENCODE_CONFIG_DIR', env('XDG_CONFIG_HOME', self.home / '.config') / 'opencode')
-        self.antigravity = env('ANTIGRAVITY_CONFIG_DIR', self.home / '.gemini' / 'config')
+        # agy does not implement ANTIGRAVITY_CONFIG_DIR. Keep installation
+        # targets in the profile it actually discovers, including for --home.
+        self.antigravity = self.home / '.gemini' / 'config'
         self.store = env('XDG_DATA_HOME', self.home / '.local' / 'share') / 'superpowers-lite'
         self.manifest = self.store / 'manifest.json'
         self.config_override = opencode_config or (os.environ.get('OPENCODE_CONFIG') if home is None else None)
@@ -1089,6 +1091,8 @@ def prepare(args, layout, temp):
     selected = set(args.only.split(',')) if args.only else (set(old['harnesses']) if args.uninstall else detected(layout))
     if not selected or not selected <= set(HARNESSES):
         raise SetupError('Select installed harnesses or explicitly pass --only ' + ','.join(HARNESSES) + '.')
+    if 'antigravity' in selected and not layout.isolated and os.environ.get('ANTIGRAVITY_CONFIG_DIR'):
+        warn('Ignoring ANTIGRAVITY_CONFIG_DIR: agy does not support it. Antigravity targets use ' + str(layout.antigravity) + '.')
     if args.uninstall:
         selected &= set(old['harnesses'])
         if not selected:
