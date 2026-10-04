@@ -38,7 +38,7 @@ DEFAULT_SKILLS = ['brainstorming', 'writing-plans', 'subagent-driven-development
 NEVER_INSTALL = {'using-superpowers', 'diagnosing-superpowers'}
 MARKER = '.superpowers-lite.json'
 ENV_VAR = 'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS'
-HARNESSES = ('codex', 'opencode', 'claude', 'pi')
+HARNESSES = ('codex', 'opencode', 'claude', 'pi', 'antigravity')
 NAME_RE = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*\Z')
 OLD_BLOCK_RE = re.compile(r'\n?<!-- superpowers-lite:\w+:begin -->.*?<!-- superpowers-lite:\w+:end -->\n?', re.S)
 UNSPECIFIED = object()
@@ -223,6 +223,7 @@ class Layout:
         self.claude = env('CLAUDE_CONFIG_DIR', self.home / '.claude')
         self.pi = env('PI_CODING_AGENT_DIR', self.home / '.pi' / 'agent')
         self.opencode = env('OPENCODE_CONFIG_DIR', env('XDG_CONFIG_HOME', self.home / '.config') / 'opencode')
+        self.antigravity = env('ANTIGRAVITY_CONFIG_DIR', self.home / '.gemini' / 'config')
         self.store = env('XDG_DATA_HOME', self.home / '.local' / 'share') / 'superpowers-lite'
         self.manifest = self.store / 'manifest.json'
         self.config_override = opencode_config or (os.environ.get('OPENCODE_CONFIG') if home is None else None)
@@ -248,11 +249,13 @@ class Layout:
             return [self.codex / 'AGENTS.md', self.codex / 'AGENTS.override.md']
         if harness == 'pi':
             return [self.pi / name for name in ('AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE.MD')]
+        if harness == 'antigravity':
+            return [self.antigravity / 'AGENTS.md', self.antigravity / 'GEMINI.md']
         return [self.claude / 'CLAUDE.md' if harness == 'claude' else self.opencode / 'AGENTS.md']
 
 
 def detected(layout):
-    return {h for h in HARNESSES if shutil.which(h) or getattr(layout, h).exists()}
+    return {h for h in HARNESSES if shutil.which('agy' if h == 'antigravity' else h) or getattr(layout, h).exists()}
 
 
 def opencode_version(override):
@@ -370,6 +373,7 @@ TOOL_NOTES = {
     'opencode2': 'Use subagent with agent "general" for subagents, read for files, and shell for shell commands. Keep a Markdown checklist when no todo tool is exposed. Follow the actual exposed tool schemas.',
     'claude': 'Use Agent (or Task on older versions) with general-purpose for subagents and the available native task/todo tools. Respect the actual tool schemas and nested-agent limits of this version.',
     'pi': 'Use Pi read, bash, edit, and write tools according to their actual schemas. Keep a Markdown checklist when no task/todo tool is exposed. Pi has no built-in subagents; an installed extension may expose a delegation tool such as subagent. Inspect the available tool description, supported modes, and configured agent roles before calling it; do not assume Codex, Claude, or OpenCode tool names or arguments. Use isolated child context for implementation/review tasks and pass the task brief, project directory, required private skill paths, and report contract explicitly. Use only supported model/effort controls and preserve explicit user constraints; never substitute a different model when a requested override fails. For fix rounds, use the extension\'s resume facility if available; otherwise send a fresh isolated worker the prior report and precise remaining findings, without claiming it resumed. If a required delegation or independent review cannot be performed with the available tools/roles, stop at that step and explain which capability is missing. Do not simulate subagents by doing their work yourself or silently replace independent review with self-review. Lite does not install extensions or agent definitions.',
+    'antigravity': 'Use the native tools exposed to Antigravity CLI. Follow the actual exposed tool schemas. Launch separate subagents using the provided tools when supported.',
 }
 
 
@@ -910,6 +914,11 @@ def plugin_conflicts(layout, harnesses):
                 for key in ('packages', 'extensions'):
                     if 'superpowers' in json.dumps(data.get(key, [])).lower():
                         issues.append(f'{settings}: {key}')
+    if 'antigravity' in harnesses:
+        for directory in [layout.antigravity] + [p / n for p in projects for n in ('.agents', '.agent', '_agents', '_agent')]:
+            for sub in ('plugins', 'plugin'):
+                if (directory / sub).is_dir():
+                    issues.extend(str(p) for p in (directory / sub).iterdir() if 'superpowers' in p.name.lower())
     for path in dict.fromkeys(configs):
         if not path.is_file():
             continue
@@ -952,6 +961,8 @@ def plugin_conflicts(layout, harnesses):
         instructions += [layout.opencode / 'AGENTS.md']
     if 'pi' in harnesses:
         instructions += layout.instruction_paths('pi')
+    if 'antigravity' in harnesses:
+        instructions += layout.instruction_paths('antigravity')
     instructions += [p / n for p in projects for n in ('AGENTS.md', 'AGENTS.override.md', 'CLAUDE.md', '.claude/CLAUDE.md')]
     for path in dict.fromkeys(instructions):
         if path.is_file():
@@ -969,6 +980,10 @@ def cleanup_old_instructions(layout, harnesses, plan, instruction_edit):
         paths += [layout.opencode / 'AGENTS.md']
     if 'claude' in harnesses:
         paths += [layout.claude / 'CLAUDE.md']
+    if 'pi' in harnesses:
+        paths += layout.instruction_paths('pi')
+    if 'antigravity' in harnesses:
+        paths += layout.instruction_paths('antigravity')
     for path in paths:
         if path.is_file():
             edit = instruction_edit(path)
@@ -1022,6 +1037,9 @@ def check_collision(layout, harness, name, target, removed):
     elif harness == 'pi':
         roots = [layout.pi / 'skills', layout.home / '.agents' / 'skills']
         roots += [p / sub / 'skills' for p in projects for sub in ('.pi', '.agents')]
+    elif harness == 'antigravity':
+        roots = [layout.antigravity / 'skills', layout.home / '.agents' / 'skills']
+        roots += [p / sub / 'skills' for p in projects for sub in ('.agents', '.agent', '_agents', '_agent')]
     else:
         roots = [layout.home / '.agents' / 'skills', layout.claude / 'skills', layout.opencode / 'skills']
         roots += [p / sub / 'skills' for p in projects for sub in ('.agents', '.claude', '.opencode')]

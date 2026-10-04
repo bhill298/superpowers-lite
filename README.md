@@ -1,4 +1,4 @@
-# Superpowers Lite 2.2
+﻿# Superpowers Lite 2.2
 
 One Python installer for manually starting Superpowers workflows in Codex, OpenCode, Claude Code, and Pi, with skill chaining authorized inside that workflow. A short global reminder reinforces required handoffs and cleanup after explicit invocation. No startup bootstrap or session hook is installed.
 
@@ -7,8 +7,8 @@ One Python installer for manually starting Superpowers workflows in Codex, OpenC
 Requires Python 3.11 or newer. On Windows use `python`; on Linux substitute `python3` if needed.
 
 ```powershell
-python .\superpowers-lite.py --only codex,opencode,claude,pi --dry-run
-python .\superpowers-lite.py --only codex,opencode,claude,pi
+python .\superpowers-lite.py --only codex,opencode,claude,pi,antigravity --dry-run
+python .\superpowers-lite.py --only codex,opencode,claude,pi,antigravity
 ```
 
 Omitting `--only` selects harnesses found on PATH or with an existing configuration directory. Explicit `--only` also works before the harness is installed. OpenCode's major version is detected from its CLI; use `--opencode-version 1` or `2` when detection is unavailable. The adapters target v1 >=1.18.30 and v2 >=2.0.4; the exact native versions tested are listed below. Version overrides are your assertion about the target installation.
@@ -43,7 +43,7 @@ The old shared `.agents/skills` installation plus Claude links exposed the same 
 | Claude Code | `~/.claude/commands/<name>.md` | `disable-model-invocation: true` on command-format skills |
 | Pi | `$PI_CODING_AGENT_DIR/skills/<name>/SKILL.md`, default `~/.pi/agent/skills` | `disable-model-invocation: true` hides entries from automatic skill advertising; `/skill:<name>` expands them explicitly |
 
-Claude supports command files as skills. OpenCode does not discover that directory as a skill source, so installing all four harnesses creates no duplicate `.agents`/`.claude` skill trees. Lite does not disable discovery of unrelated Claude skills. Known same-name collisions in standard roots are rejected instead of silently overwritten.
+Claude supports command files as skills. OpenCode does not discover that directory as a skill source, so installing all five harnesses creates no duplicate `.agents`/`.claude` skill trees. Lite does not disable discovery of unrelated Claude skills. Known same-name collisions in standard roots are rejected instead of silently overwritten.
 
 Sources: [Codex skill policy](https://learn.chatgpt.com/docs/build-skills), [Claude command/skill compatibility](https://code.claude.com/docs/en/skills), [OpenCode v1 permissions](https://opencode.ai/docs/permissions/), [OpenCode v2 skill discovery and controls](https://opencode.ai/v2/docs/skills). Native checks confirmed Codex's private `$CODEX_HOME/skills` discovery and the v1 slash-command behavior.
 
@@ -93,7 +93,7 @@ python superpowers-lite.py --update-default-ref --dry-run
 python superpowers-lite.py --update-default-ref
 ```
 
-This mode accepts only the optional `--dry-run` flag. It downloads both revisions, checks compatibility, and exercises fresh install, update, repeated update, and uninstall in temporary homes for all four harnesses and both OpenCode adapters. It does not run upstream helpers or native harnesses. On success it atomically replaces only the `DEFAULT_REF` value, preserving the script's other bytes and permission bits. Existing installations are unchanged; run a normal installation afterward to update them.
+This mode accepts only the optional `--dry-run` flag. It downloads both revisions, checks compatibility, and exercises fresh install, update, repeated update, and uninstall in temporary homes for all five harnesses and both OpenCode adapters. It does not run upstream helpers or native harnesses. On success it atomically replaces only the `DEFAULT_REF` value, preserving the script's other bytes and permission bits. Existing installations are unchanged; run a normal installation afterward to update them.
 
 The compatibility check allows workflow prose changes, static diagrams, and new prose-only Markdown resources. It rejects removed bundled files, unsupported skill metadata, changed or added helper/non-prose assets, changed executable/example code blocks, changed template substitutions, and new unresolved local or `superpowers:` skill references. Existing unresolved references do not by themselves block an update. Failures exit nonzero, report the affected files or validation error, and leave the pin unchanged. A rejection means the change needs manual compatibility review; it is not necessarily proof of an upstream defect. There is no override flag.
 
@@ -129,8 +129,8 @@ Pi also discovers shared `.agents/skills`, project `.pi/skills`, and configured/
 
 ```text
 python superpowers-lite.py --audit
-python superpowers-lite.py --only codex,opencode,claude,pi --migrate-legacy --dry-run
-python superpowers-lite.py --only codex,opencode,claude,pi --migrate-legacy
+python superpowers-lite.py --only codex,opencode,claude,pi,antigravity --migrate-legacy --dry-run
+python superpowers-lite.py --only codex,opencode,claude,pi,antigravity --migrate-legacy
 ```
 
 Include every affected harness because the original layout was shared. Migration recognizes legacy ownership markers, removes verified shared entries and Claude links/copies, replaces old `ask` rules for those entries, and removes Lite's old marked prompt/shell blocks. The new scoped workflow reminder is installed independently unless disabled. Previous files remain in transaction backups. It refuses unrelated or unrecognized entries.
